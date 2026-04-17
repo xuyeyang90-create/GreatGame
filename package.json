@@ -1,0 +1,19 @@
+{
+  "name": "phaser-codex-starter",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A Phaser + Vite + TypeScript starter project for Codex-driven game development.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vite": "^6.3.1"
+  }
+}
