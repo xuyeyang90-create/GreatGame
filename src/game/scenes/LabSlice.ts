@@ -95,6 +95,7 @@ type LabCard = {
   id: string;
   name: string;
   sex: Sex;
+  isPlayerSelf: boolean;
   generation: number;
   ageDays: number;
   lifeStage: LifeStage;
@@ -140,6 +141,7 @@ const genePoolByTier: Record<'strong' | 'good' | 'balanced' | 'weak', GeneAllele
   weak: ['N', 'B', 'B', 'C', 'A']
 };
 const defectFamilyBias: Record<'low' | 'medium' | 'high', number> = { low: 18, medium: 32, high: 46 };
+const UI_FONT_FAMILY = '"Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif';
 
 export class LabSliceScene extends Phaser.Scene {
   private day = 1;
@@ -175,6 +177,7 @@ export class LabSliceScene extends Phaser.Scene {
 
   create(): void {
     this.cameras.main.setBackgroundColor('#120c18');
+    this.installTextFactory();
     this.seed();
     this.drawShell();
     this.setupRosterDragging();
@@ -185,13 +188,13 @@ export class LabSliceScene extends Phaser.Scene {
     const female1 = this.createAdultCard('绮宁1号', '女', 1, 28, { appearance: 'strong', figure: 'good', aura: 'strong', gentleness: 'good', eloquence: 'balanced', stability: 'good', constitution: 'balanced' }, { FEC: 'good', GES: 'good', HER: 'balanced', VAR: 'balanced', MND: 'good' }, 'medium');
     const female2 = this.createAdultCard('柔辞2号', '女', 1, 31, { appearance: 'good', figure: 'balanced', aura: 'balanced', gentleness: 'strong', eloquence: 'good', stability: 'good', constitution: 'good' }, { FEC: 'strong', GES: 'good', HER: 'good', VAR: 'balanced', MND: 'good' }, 'low');
     const female3 = this.createAdultCard('澜语3号', '女', 1, 24, { appearance: 'balanced', figure: 'balanced', aura: 'strong', gentleness: 'balanced', eloquence: 'strong', stability: 'balanced', constitution: 'good' }, { FEC: 'balanced', GES: 'good', HER: 'balanced', VAR: 'good', MND: 'balanced' }, 'medium');
-    const male1 = this.createAdultCard('曜仪4号', '男', 1, 33, { appearance: 'strong', figure: 'strong', aura: 'good', gentleness: 'balanced', eloquence: 'balanced', stability: 'good', constitution: 'good' }, { FEC: 'good', GES: 'good', HER: 'strong', VAR: 'balanced', MND: 'good' }, 'low');
-    const male2 = this.createAdultCard('言序5号', '男', 1, 36, { appearance: 'good', figure: 'balanced', aura: 'good', gentleness: 'good', eloquence: 'strong', stability: 'balanced', constitution: 'balanced' }, { FEC: 'balanced', GES: 'balanced', HER: 'good', VAR: 'good', MND: 'strong' }, 'medium');
-    const female4 = this.createAdultCard('宁衡6号', '女', 2, 19, { appearance: 'balanced', figure: 'good', aura: 'balanced', gentleness: 'balanced', eloquence: 'balanced', stability: 'strong', constitution: 'strong' }, { FEC: 'good', GES: 'good', HER: 'balanced', VAR: 'weak', MND: 'good' }, 'low', female2.id, male1.id);
-    this.cards = [female1, female2, female3, male1, male2, female4];
-    this.samples = [this.createSample('外部样本-顾问A', '首席顾问', 'A', ['稳妥', '高礼仪']), this.createSample('外部样本-投资人S', '剧院投资人', 'S', ['高魅力', '强传承'])];
+    const playerSelf = this.createPlayerSelf();
+    const female4 = this.createAdultCard('宁衡4号', '女', 1, 19, { appearance: 'balanced', figure: 'good', aura: 'balanced', gentleness: 'balanced', eloquence: 'balanced', stability: 'strong', constitution: 'strong' }, { FEC: 'good', GES: 'good', HER: 'balanced', VAR: 'weak', MND: 'good' }, 'low');
+    this.cards = [female1, female2, female3, female4, playerSelf];
+    this.samples = [];
     this.targets = [this.createMissionTarget(), this.createMissionTarget(), this.createMissionTarget()];
     this.pushLog('实验室完成晨检，所有现役个体均为成年人。');
+    this.pushLog('开局没有男特工和外部授权样本，实验室当前可用父系来源只有“自己”。');
     this.pushLog('本轮切片引入年龄、健康、寿命磨损、成长特质和祖父母深度血系风险。');
   }
 
@@ -442,7 +445,7 @@ export class LabSliceScene extends Phaser.Scene {
     target.clues.forEach((clue, index) => {
       const y = 182 + index * 54;
       this.ui.push(this.add.rectangle(396, y + 16, 500, 40, 0x0b1319, 0.94).setStrokeStyle(1, 0x38bdf8), this.add.text(164, y + 2, clue.label, { fontSize: '11px', color: '#67e8f9', fontStyle: 'bold' }));
-      if (clue.unlocked) this.ui.push(this.add.text(164, y + 18, clue.text, { fontSize: '10px', color: '#d8f9ff', wordWrap: { width: 420 } }));
+      if (clue.unlocked) this.ui.push(this.add.text(164, y + 18, this.wrapUiText(clue.text, 28), { fontSize: '10px', color: '#d8f9ff' }));
       else {
         this.ui.push(this.add.text(164, y + 18, '??? 支付资金后解锁。', { fontSize: '10px', color: '#94a3b8' }));
         this.button(590, y + 10, 86, 18, `解锁 ${clue.cost}`, this.money >= clue.cost && !target.assignedCardId, () => this.unlockClue(target.id, clue.id), 0x0f766e);
@@ -484,7 +487,7 @@ export class LabSliceScene extends Phaser.Scene {
       this.add.text(220, 100, title, { fontSize: '22px', color: '#fff7fb', fontStyle: 'bold' })
     );
     lines.forEach((line, index) => {
-      this.ui.push(this.add.text(220, 146 + index * 44, line, { fontSize: '13px', color: index % 2 === 0 ? '#f5d0fe' : '#bfdbfe', wordWrap: { width: 520 } }));
+      this.ui.push(this.add.text(220, 146 + index * 44, this.wrapUiText(line, 32), { fontSize: '13px', color: index % 2 === 0 ? '#f5d0fe' : '#bfdbfe' }));
     });
     this.button(642, 96, 46, 24, '关闭', true, () => { this.helpSection = null; this.render(); }, 0x7f1d1d);
   }
@@ -498,7 +501,7 @@ export class LabSliceScene extends Phaser.Scene {
       this.add.rectangle(480, 270, 520, 220, 0x181322, 0.98).setStrokeStyle(2, 0x8b5cf6),
       this.add.text(246, 180, `${ownerName} · ${trait.name}`, { fontSize: '22px', color: '#fff7fb', fontStyle: 'bold' }),
       this.add.text(246, 214, stageLabel, { fontSize: '13px', color: '#c4b5fd', fontStyle: 'bold' }),
-      this.add.text(246, 246, trait.description, { fontSize: '14px', color: '#e9d5ff', wordWrap: { width: 410 } })
+      this.add.text(246, 246, this.wrapUiText(trait.description, 26), { fontSize: '14px', color: '#e9d5ff' })
     );
     this.button(646, 180, 58, 22, '关闭', true, () => {
       this.traitDetail = null;
@@ -515,11 +518,11 @@ export class LabSliceScene extends Phaser.Scene {
       this.add.rectangle(480, 270, 700, 360, 0x181322, 0.98).setStrokeStyle(2, 0xf59e0b),
       this.add.text(180, 116, '实验室事件', { fontSize: '18px', color: '#fde68a', fontStyle: 'bold' }),
       this.add.text(180, 148, event.title, { fontSize: '22px', color: '#fff7fb', fontStyle: 'bold' }),
-      this.add.text(180, 184, event.body, { fontSize: '14px', color: '#e9d5ff', wordWrap: { width: 560 } })
+      this.add.text(180, 184, this.wrapUiText(event.body, 34), { fontSize: '14px', color: '#e9d5ff', lineSpacing: 4 })
     );
     event.options.forEach((option, index) => {
       const y = 280 + index * 64;
-      this.ui.push(this.add.text(210, y - 20, option.effectText, { fontSize: '12px', color: '#cbd5e1', wordWrap: { width: 500 } }));
+      this.ui.push(this.add.text(210, y - 20, this.wrapUiText(option.effectText, 28), { fontSize: '12px', color: '#cbd5e1' }));
       this.button(180, y, 520, 28, option.label, true, () => this.resolveEventOption(index), 0x7c3aed);
     });
   }
@@ -576,7 +579,8 @@ export class LabSliceScene extends Phaser.Scene {
       } else {
         this.button(x, y, 58, 18, this.fatherCardId === card.id ? '取消父本' : (this.fatherBlockedReason(card) ?? '选父本'), this.canToggleFather(card), () => this.toggleFather(card.id), 0x1d4ed8);
         this.button(x + 64, y, 48, 18, '休整', this.canRest(card), () => this.restCard(card.id), 0x475569);
-        this.button(x + 52, y + 24, 60, 18, '淘汰', !card.mission && !card.pregnancy, () => this.retireCard(card.id), 0x7f1d1d);
+        this.button(x + 116, y, 48, 18, '改名', card.isPlayerSelf, () => this.renameCard(card.id), 0x0f766e);
+        this.button(x + 52, y + 24, 60, 18, card.isPlayerSelf ? '本人' : '淘汰', !card.isPlayerSelf && !card.mission && !card.pregnancy, () => this.retireCard(card.id), 0x7f1d1d);
       }
       return;
     }
@@ -587,7 +591,8 @@ export class LabSliceScene extends Phaser.Scene {
       this.button(x + 52, y + 24, 60, 18, '淘汰', !card.mission && !card.pregnancy, () => this.retireCard(card.id), 0x7f1d1d);
     } else {
       this.button(x + 64, y, 48, 18, '休整', this.canRest(card), () => this.restCard(card.id), 0x475569);
-      this.button(x + 52, y + 24, 60, 18, '淘汰', !card.mission && !card.pregnancy, () => this.retireCard(card.id), 0x7f1d1d);
+      this.button(x + 116, y, 48, 18, '改名', card.isPlayerSelf, () => this.renameCard(card.id), 0x0f766e);
+      this.button(x + 52, y + 24, 60, 18, card.isPlayerSelf ? '本人' : '淘汰', !card.isPlayerSelf && !card.mission && !card.pregnancy, () => this.retireCard(card.id), 0x7f1d1d);
     }
   }
 
@@ -649,9 +654,7 @@ export class LabSliceScene extends Phaser.Scene {
     if (this.pendingEvent) return;
     const candidates = this.buildLabEvents();
     if (!candidates.length) return;
-    const forced = candidates.find((event) => event.source === 'balance');
-    const chance = forced ? 68 : 32;
-    if (Phaser.Math.Between(1, 100) > chance) return;
+    if (Phaser.Math.Between(1, 100) > 20) return;
     this.pendingEvent = Phaser.Utils.Array.GetRandom(candidates);
     if (this.pendingEvent.source === 'day') this.seenEventIds.add(this.pendingEvent.id);
   }
@@ -1128,7 +1131,8 @@ export class LabSliceScene extends Phaser.Scene {
   }
 
   private cardSummaryLine(card: LabCard): string {
-    const base = `${card.sex}性 | ${LIFE_STAGE_LABELS[card.lifeStage]} | ${card.ageDays}天 | 健康${card.health} | 体力${card.stamina}`;
+    const role = card.isPlayerSelf ? '自己' : `${card.sex}性`;
+    const base = `${role} | ${LIFE_STAGE_LABELS[card.lifeStage]} | ${card.ageDays}天 | 健康${card.health} | 体力${card.stamina}`;
     return card.sex === '女' ? `${base} | 忠诚${card.loyalty}` : `${base} | 血系值${card.bloodlineValue}`;
   }
 
@@ -1178,12 +1182,25 @@ export class LabSliceScene extends Phaser.Scene {
   private retireCard(id: string): void {
     const card = this.card(id);
     if (!card) return;
+    if (card.isPlayerSelf) return;
     this.cards = this.cards.filter((entry) => entry.id !== id);
     if (this.motherId === id) this.motherId = null;
     if (this.fatherCardId === id) this.fatherCardId = null;
     if (this.assignmentCardId === id) this.assignmentCardId = null;
     this.money += 5;
     this.pushLog(`${card.name} 已从现役名册中移除，回收资金 5。`);
+    this.render();
+  }
+
+  private renameCard(id: string): void {
+    const card = this.card(id);
+    if (!card || !card.isPlayerSelf) return;
+    const nextName = window.prompt('输入新的名字', card.name)?.trim();
+    if (!nextName) return;
+    const safeName = nextName.slice(0, 12);
+    if (safeName === card.name) return;
+    card.name = safeName;
+    this.pushLog(`“自己”的识别名已更新为 ${safeName}。`);
     this.render();
   }
 
@@ -1465,11 +1482,12 @@ export class LabSliceScene extends Phaser.Scene {
     });
     return { children: pregnancy.children, events };
   }
-  private createAdultCard(name: string, sex: Sex, generation: number, ageDays: number, statProfile: Record<StatKey, 'strong' | 'good' | 'balanced' | 'weak'>, breedingProfile: Record<BreedingGeneKey, 'strong' | 'good' | 'balanced' | 'weak'>, defectBias: 'low' | 'medium' | 'high', motherId: string | null = null, fatherId: string | null = null): LabCard {
+  private createAdultCard(name: string, sex: Sex, generation: number, ageDays: number, statProfile: Record<StatKey, 'strong' | 'good' | 'balanced' | 'weak'>, breedingProfile: Record<BreedingGeneKey, 'strong' | 'good' | 'balanced' | 'weak'>, defectBias: 'low' | 'medium' | 'high', motherId: string | null = null, fatherId: string | null = null, isPlayerSelf = false): LabCard {
     const visibleGenome = this.makeVisibleGenome(statProfile);
     const breedingGenome = this.makeBreedingGenome(breedingProfile);
     const defectGenome = this.makeDefectGenome(defectBias);
     const card = this.createCardBase(name, sex, generation, ageDays, motherId, fatherId, visibleGenome, breedingGenome, defectGenome);
+    card.isPlayerSelf = isPlayerSelf;
     this.revealGrowthTraits(card);
     return card;
   }
@@ -1498,6 +1516,20 @@ export class LabSliceScene extends Phaser.Scene {
 
   private rollChildren(mother: LabCard, father: LabCard | null, sample: SampleCard | null, bloodlineRisk: RiskBand): LabCard[] { return this.createChildCard(mother, father, sample, Math.max(mother.generation, father?.generation ?? mother.generation) + 1, bloodlineRisk); }
 
+  private createPlayerSelf(): LabCard {
+    const randomTier = (): 'strong' | 'good' | 'balanced' | 'weak' => Phaser.Utils.Array.GetRandom(['strong', 'good', 'balanced', 'weak']);
+    const statProfile = {} as Record<StatKey, 'strong' | 'good' | 'balanced' | 'weak'>;
+    const breedingProfile = {} as Record<BreedingGeneKey, 'strong' | 'good' | 'balanced' | 'weak'>;
+    STAT_KEYS.forEach((key) => { statProfile[key] = randomTier(); });
+    BREEDING_GENE_KEYS.forEach((key) => { breedingProfile[key] = randomTier(); });
+    const card = this.createAdultCard('自己', '男', 1, Phaser.Math.Between(26, 38), statProfile, breedingProfile, 'low', null, null, true);
+    card.lifespanPotential = 9999;
+    card.agingWear = 0;
+    card.lifeStage = 'mature';
+    card.tags = ['自持锚点', ...card.tags.filter((tag) => tag !== '优良父系')].slice(0, 3);
+    return card;
+  }
+
   private createCardBase(name: string, sex: Sex, generation: number, ageDays: number, motherId: string | null, fatherId: string | null, visibleGenome: VisibleGenome, breedingGenome: BreedingGenome, defectGenome: DefectGenome): LabCard {
     const visibleStats = this.computeStats(visibleGenome);
     const expressedDefects = this.evaluateDefects(defectGenome, visibleStats);
@@ -1509,6 +1541,7 @@ export class LabSliceScene extends Phaser.Scene {
       id: `card-${Phaser.Math.RND.uuid().slice(0, 8)}`,
       name,
       sex,
+      isPlayerSelf: false,
       generation,
       ageDays,
       lifeStage: 'mature',
@@ -1677,6 +1710,10 @@ export class LabSliceScene extends Phaser.Scene {
   }
 
   private updateLifeStage(card: LabCard): void {
+    if (card.isPlayerSelf) {
+      card.lifeStage = 'mature';
+      return;
+    }
     if (card.ageDays <= 6) { card.lifeStage = 'infant'; return; }
     if (card.ageDays <= 17) { card.lifeStage = 'growth'; return; }
     const ratio = (card.ageDays + card.agingWear) / card.lifespanPotential;
@@ -1881,6 +1918,45 @@ export class LabSliceScene extends Phaser.Scene {
   private snapRosterScroll(value: number): number {
     const rowStep = ROSTER_CARD_HEIGHT + ROSTER_CARD_GAP;
     return this.clampScroll(Math.round(value / rowStep) * rowStep);
+  }
+
+  private installTextFactory(): void {
+    const factory = this.add;
+    const originalText = factory.text.bind(factory);
+    const scene = this;
+    (factory as typeof factory & {
+      text: (x: number, y: number, text: string | string[], style?: Phaser.Types.GameObjects.Text.TextStyle) => Phaser.GameObjects.Text;
+    }).text = function patchedText(x, y, text, style) {
+      return originalText(x, y, text, scene.withUiFont(style));
+    };
+  }
+
+  private withUiFont(style?: Phaser.Types.GameObjects.Text.TextStyle): Phaser.Types.GameObjects.Text.TextStyle {
+    return {
+      fontFamily: UI_FONT_FAMILY,
+      padding: { top: 2, bottom: 2, left: 0, right: 0 },
+      ...style
+    };
+  }
+
+  private wrapUiText(text: string, maxCharsPerLine: number): string {
+    const normalized = text.replace(/\r/g, '');
+    const paragraphs = normalized.split('\n');
+    const wrapped = paragraphs.map((paragraph) => {
+      if (!paragraph) return '';
+      const lines: string[] = [];
+      let current = '';
+      for (const char of paragraph) {
+        current += char;
+        if (current.length >= maxCharsPerLine) {
+          lines.push(current);
+          current = '';
+        }
+      }
+      if (current) lines.push(current);
+      return lines.join('\n');
+    });
+    return wrapped.join('\n');
   }
 
   private button(x: number, y: number, w: number, h: number, label: string, enabled: boolean, onClick: () => void, fill = 0x334155): void {
