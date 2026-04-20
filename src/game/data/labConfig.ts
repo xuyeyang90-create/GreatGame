@@ -29,12 +29,14 @@ export const LIFE_STAGES = [
 ] as const;
 
 export const TRAIT_STAGES = ['innate', 'growth'] as const;
+export const TRAIT_POLARITIES = ['positive', 'negative'] as const;
 
 export type StatKey = (typeof STAT_KEYS)[number];
 export type BreedingGeneKey = (typeof BREEDING_GENE_KEYS)[number];
 export type DefectKey = (typeof DEFECT_KEYS)[number];
 export type LifeStage = (typeof LIFE_STAGES)[number];
 export type TraitStage = (typeof TRAIT_STAGES)[number];
+export type TraitPolarity = (typeof TRAIT_POLARITIES)[number];
 export type Sex = '女' | '男';
 export type GeneAllele = 'S' | 'A' | 'N' | 'B' | 'C';
 export type DefectAllele = 'R' | 'r';
@@ -48,13 +50,14 @@ export type TraitDefinition = {
   id: string;
   name: string;
   stage: TraitStage;
+  polarity: TraitPolarity;
   description: string;
   statMods?: Partial<Record<StatKey, number>>;
+  statCaps?: Partial<Record<StatKey, number>>;
   healthDelta?: number;
   lifespanDelta?: number;
   loyaltyDrainMod?: number;
   missionRiskMod?: number;
-  bloodlineValueMod?: number;
   fertilityMod?: number;
 };
 
@@ -117,33 +120,40 @@ export const INNATE_TRAITS: TraitDefinition[] = [
     id: 'photogenic',
     name: '镜头感',
     stage: 'innate',
+    polarity: 'positive',
     description: '高容貌会自然转化成更强的整体呈现力。',
-    statMods: { aura: 6 },
-    missionRiskMod: -4,
-    bloodlineValueMod: 6
+    statMods: { aura: 6, eloquence: 2 },
+    statCaps: { appearance: 12, aura: 8 },
+    missionRiskMod: -4
   },
   {
     id: 'talkative',
     name: '善谈',
     stage: 'innate',
+    polarity: 'positive',
     description: '表达能力强，也更容易让互动保持柔和顺畅。',
     statMods: { gentleness: 4, stability: 3 },
+    statCaps: { eloquence: 10, gentleness: 6 },
     missionRiskMod: -5
   },
   {
     id: 'calmingPresence',
     name: '安抚气场',
     stage: 'innate',
+    polarity: 'positive',
     description: '温柔优势会延伸成更稳定的控场气场。',
     statMods: { stability: 6 },
+    statCaps: { gentleness: 10, stability: 8 },
     missionRiskMod: -4
   },
   {
     id: 'emotionallyStable',
     name: '情绪稳态',
     stage: 'innate',
+    polarity: 'positive',
     description: '稳定的人也更容易给目标安全感。',
     statMods: { gentleness: 5 },
+    statCaps: { stability: 12, gentleness: 4 },
     loyaltyDrainMod: -1,
     missionRiskMod: -4
   },
@@ -151,8 +161,10 @@ export const INNATE_TRAITS: TraitDefinition[] = [
     id: 'pressureResistant',
     name: '耐压体',
     stage: 'innate',
+    polarity: 'positive',
     description: '体质优势会带来更好的抗压恢复与控场稳定。',
     statMods: { stability: 4 },
+    statCaps: { constitution: 10, stability: 4 },
     healthDelta: 6,
     missionRiskMod: -3
   },
@@ -160,16 +172,20 @@ export const INNATE_TRAITS: TraitDefinition[] = [
     id: 'longLivedTendency',
     name: '长寿倾向',
     stage: 'innate',
+    polarity: 'positive',
     description: '衰退会来得更晚一些。',
-    lifespanDelta: 18,
-    bloodlineValueMod: 8
+    statMods: { constitution: 4 },
+    statCaps: { constitution: 8 },
+    lifespanDelta: 18
   },
   {
     id: 'frailBody',
     name: '弱体',
     stage: 'innate',
+    polarity: 'negative',
     description: '恢复速度慢，体质较差。',
     statMods: { constitution: -8 },
+    statCaps: { constitution: -10 },
     healthDelta: -8,
     missionRiskMod: 6
   },
@@ -177,7 +193,9 @@ export const INNATE_TRAITS: TraitDefinition[] = [
     id: 'subfertileBody',
     name: '孕程脆弱',
     stage: 'innate',
+    polarity: 'negative',
     description: '更难顺利完成妊娠。',
+    statCaps: { constitution: -4 },
     fertilityMod: -10,
     missionRiskMod: 2
   },
@@ -185,10 +203,51 @@ export const INNATE_TRAITS: TraitDefinition[] = [
     id: 'coldAffect',
     name: '疏离感',
     stage: 'innate',
+    polarity: 'negative',
     description: '不易建立亲和，但也不易被魅力带偏。',
     statMods: { gentleness: -6 },
-    loyaltyDrainMod: -1,
+    statCaps: { gentleness: -10 },
+    loyaltyDrainMod: 1,
     missionRiskMod: 4
+  },
+  {
+    id: 'pureblood',
+    name: '纯血',
+    stage: 'innate',
+    polarity: 'positive',
+    description: '稀有的纯血特质，能压住坏特质继续恶化的趋势，并帮助优秀血线稳定延续。',
+    statCaps: {
+      appearance: 6,
+      figure: 6,
+      aura: 6,
+      gentleness: 6,
+      eloquence: 6,
+      stability: 6,
+      constitution: 6
+    },
+    missionRiskMod: -3,
+    fertilityMod: 8,
+    lifespanDelta: 10
+  },
+  {
+    id: 'degradedLine',
+    name: '劣化',
+    stage: 'innate',
+    polarity: 'negative',
+    description: '血线劣化已经定型，后代表现和生命状态都会明显下滑。',
+    statCaps: {
+      appearance: -8,
+      figure: -8,
+      aura: -8,
+      gentleness: -8,
+      eloquence: -8,
+      stability: -8,
+      constitution: -8
+    },
+    healthDelta: -8,
+    fertilityMod: -8,
+    lifespanDelta: -12,
+    missionRiskMod: 8
   }
 ];
 
@@ -197,6 +256,7 @@ export const GROWTH_TRAITS: TraitDefinition[] = [
     id: 'attachmentFormed',
     name: '依附建立',
     stage: 'growth',
+    polarity: 'positive',
     description: '在熟悉环境中恢复更快，频繁换岗则会不适。',
     loyaltyDrainMod: -1
   },
@@ -204,7 +264,9 @@ export const GROWTH_TRAITS: TraitDefinition[] = [
     id: 'composedUnderPressure',
     name: '临压镇定',
     stage: 'growth',
+    polarity: 'positive',
     description: '对高魅力目标的后期风险更低。',
+    statCaps: { stability: 8 },
     missionRiskMod: -6,
     loyaltyDrainMod: -1
   },
@@ -212,15 +274,19 @@ export const GROWTH_TRAITS: TraitDefinition[] = [
     id: 'socialInstinct',
     name: '社交直觉',
     stage: 'growth',
+    polarity: 'positive',
     description: '更容易匹配到合适委托。',
-    missionRiskMod: -5,
-    bloodlineValueMod: 4
+    statMods: { eloquence: 3, gentleness: 2 },
+    statCaps: { eloquence: 8, gentleness: 6 },
+    missionRiskMod: -5
   },
   {
     id: 'overSensitive',
     name: '高敏',
     stage: 'growth',
+    polarity: 'negative',
     description: '对温和目标表现更好，但高压时更容易掉忠诚。',
+    statCaps: { stability: -4 },
     loyaltyDrainMod: 1,
     missionRiskMod: 2
   },
@@ -228,28 +294,36 @@ export const GROWTH_TRAITS: TraitDefinition[] = [
     id: 'protocolDrift',
     name: '协议漂移',
     stage: 'growth',
+    polarity: 'negative',
     description: '长期高压下更容易出现自主偏移。',
+    statCaps: { stability: -10 },
     missionRiskMod: 6
   },
   {
     id: 'selfAwareness',
     name: '自我意识',
     stage: 'growth',
+    polarity: 'positive',
     description: '复杂目标下更灵活，但长期压榨会触发退出倾向。',
+    statMods: { stability: 2, aura: 2 },
+    statCaps: { aura: 6, stability: 4 },
     missionRiskMod: -2,
-    bloodlineValueMod: 5
+    loyaltyDrainMod: 1
   },
   {
     id: 'bloodlineEcho',
     name: '血脉回响',
     stage: 'growth',
+    polarity: 'positive',
     description: '主导气质更易稳定传承。',
-    bloodlineValueMod: 10
+    statMods: { aura: 4, stability: 2 },
+    statCaps: { aura: 8, appearance: 4 }
   },
   {
     id: 'selfRepair',
     name: '自修复',
     stage: 'growth',
+    polarity: 'positive',
     description: '日常恢复速度更快。',
     healthDelta: 6
   },
@@ -257,7 +331,9 @@ export const GROWTH_TRAITS: TraitDefinition[] = [
     id: 'overworkSensitive',
     name: '过劳敏感',
     stage: 'growth',
+    polarity: 'negative',
     description: '连续派遣会更快损耗健康。',
+    statCaps: { constitution: -6 },
     healthDelta: -4,
     missionRiskMod: 4
   }

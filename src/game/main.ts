@@ -13,10 +13,11 @@ export function StartGame(parent: string): Phaser.Game {
     return game;
   }
 
-  const config: Phaser.Types.Core.GameConfig = {
+  const config: Phaser.Types.Core.GameConfig & { resolution: number } = {
     type: Phaser.AUTO,
     width: GAME_WIDTH,
     height: GAME_HEIGHT,
+    resolution: Math.min(window.devicePixelRatio || 1, 2),
     backgroundColor: '#18202b',
     parent,
     physics: {

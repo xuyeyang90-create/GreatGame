@@ -18,6 +18,7 @@ import {
   type LifeStage,
   type Sex,
   type StatKey,
+  type TraitPolarity,
   type TraitDefinition,
   type VisibleGenome
 } from '../data/labConfig';
@@ -28,12 +29,31 @@ type PageTab = 'breed' | 'assign';
 type HelpSection = 'library' | 'monitor' | 'actions';
 type MissionDifficulty = 'low' | 'mid' | 'high';
 type EventSource = 'day' | 'balance' | 'random';
+type PurebloodAllele = 'N' | 'P';
+type DegradationAllele = 'N' | 'D';
+type PurebloodPair = [PurebloodAllele, PurebloodAllele];
+type DegradationPair = [DegradationAllele, DegradationAllele];
+type LegacyGenome = { pureblood: PurebloodPair; degradation: DegradationPair };
 
-type TraitEntry = { id: string; name: string; stage: 'innate' | 'growth'; description: string };
+type TraitEntry = { id: string; name: string; stage: 'innate' | 'growth'; description: string; tier: number; polarity: TraitPolarity };
 type PendingGrowthTrait = TraitEntry & { revealAge: number };
 type VisibleStats = Record<StatKey, number>;
 type LabEventOption = { label: string; effectText: string; apply: () => string };
 type LabEvent = { id: string; title: string; body: string; source: EventSource; options: LabEventOption[] };
+type BreedingSummary = {
+  canBreed: boolean;
+  cost: number;
+  successBand: RiskBand;
+  positiveRange: [number, number];
+  negativeRange: [number, number];
+  purebloodChance: number;
+  degradationChance: number;
+  projectedChildTendency: string[];
+  purebloodFactors: string[];
+  degradationFactors: string[];
+  startScore: number;
+  riskBoost: number;
+};
 type TemporaryEffect = {
   id: string;
   title: string;
@@ -56,6 +76,7 @@ type SampleCard = {
   visibleGenome: VisibleGenome;
   breedingGenome: BreedingGenome;
   defectGenome: DefectGenome;
+  legacyGenome: LegacyGenome;
 };
 
 type MissionClue = { id: string; label: string; text: string; cost: number; unlocked: boolean };
@@ -111,6 +132,7 @@ type LabCard = {
   breedingGenome: BreedingGenome;
   defectGenome: DefectGenome;
   expressedDefects: string[];
+  legacyGenome: LegacyGenome;
   innateTraits: TraitEntry[];
   growthTraits: TraitEntry[];
   pendingGrowthTraits: PendingGrowthTrait[];
@@ -130,10 +152,24 @@ const LOCUS_MINOR = 2;
 const ADULT_MISSION_THRESHOLD = 18;
 const AGE_GROWTH_REVEAL = 8;
 const AGE_MATURE_REVEAL = 18;
-const ROSTER_CARD_HEIGHT = 132;
-const ROSTER_CARD_GAP = 8;
-const ROSTER_VIEW_TOP = 128;
-const ROSTER_VIEW_BOTTOM = 506;
+const HEADER_HEIGHT = 64;
+const CONTENT_TOP = 78;
+const FOOTER_TOP = 812;
+const FOOTER_HEIGHT = 38;
+const LEFT_PANEL_X = 18;
+const LEFT_PANEL_Y = CONTENT_TOP;
+const LEFT_PANEL_WIDTH = 1064;
+const LEFT_PANEL_HEIGHT = 718;
+const RIGHT_PANEL_X = 1098;
+const RIGHT_PANEL_Y = CONTENT_TOP;
+const RIGHT_PANEL_WIDTH = 420;
+const MONITOR_PANEL_HEIGHT = 392;
+const ACTION_PANEL_Y = 484;
+const ACTION_PANEL_HEIGHT = 312;
+const ROSTER_CARD_HEIGHT = 136;
+const ROSTER_CARD_GAP = 12;
+const ROSTER_VIEW_TOP = 204;
+const ROSTER_VIEW_BOTTOM = 730;
 const genePoolByTier: Record<'strong' | 'good' | 'balanced' | 'weak', GeneAllele[]> = {
   strong: ['S', 'S', 'A', 'A', 'N'],
   good: ['S', 'A', 'A', 'N', 'N', 'B'],
@@ -155,6 +191,7 @@ export class LabSliceScene extends Phaser.Scene {
   private assignmentCardId: string | null = null;
   private detailTargetId: string | null = null;
   private traitDetail: { trait: TraitEntry; ownerName: string } | null = null;
+  private breedingDetailOpen = false;
   private cards: LabCard[] = [];
   private samples: SampleCard[] = [];
   private targets: MissionTarget[] = [];
@@ -195,20 +232,17 @@ export class LabSliceScene extends Phaser.Scene {
     this.targets = [this.createMissionTarget(), this.createMissionTarget(), this.createMissionTarget()];
     this.pushLog('实验室完成晨检，所有现役个体均为成年人。');
     this.pushLog('开局没有男特工和外部授权样本，实验室当前可用父系来源只有“自己”。');
-    this.pushLog('本轮切片引入年龄、健康、寿命磨损、成长特质和祖父母深度血系风险。');
+    this.pushLog('本轮切片改为以预计好特质、预计坏特质、纯血概率和劣化风险来判断繁育价值。');
   }
 
   private drawShell(): void {
     const { width, height } = this.scale;
-    this.add.rectangle(width / 2, height / 2, width, height, 0x120c18);
-    this.add.rectangle(width / 2, 34, width - 20, 54, 0x23162d, 0.95).setStrokeStyle(2, 0x5c3b6b);
-    this.add.rectangle(330, 292, 620, 458, 0x1b1323, 0.94).setStrokeStyle(2, 0x654578);
-    this.add.rectangle(814, 202, 262, 278, 0x1a1222, 0.95).setStrokeStyle(2, 0x72508a);
-    this.add.rectangle(814, 446, 262, 214, 0x1a1222, 0.95).setStrokeStyle(2, 0x72508a);
-    this.add.text(132, 18, '生化实验室切片', { fontSize: '20px', color: '#fff7fb', fontStyle: 'bold' });
-    this.add.text(24, 70, '卡库', { fontSize: '18px', color: '#f5d0fe', fontStyle: 'bold' });
-    this.add.text(690, 70, '实验室显示屏', { fontSize: '17px', color: '#f5d0fe', fontStyle: 'bold' });
-    this.add.text(690, 336, '主操作区', { fontSize: '17px', color: '#f5d0fe', fontStyle: 'bold' });
+    this.add.rectangle(width / 2, height / 2, width, height, 0x0a0f23);
+    this.add.rectangle(width / 2, HEADER_HEIGHT / 2 + 4, width - 12, HEADER_HEIGHT, 0x0d132b, 0.98).setStrokeStyle(1, 0x2a315d);
+    this.add.rectangle(LEFT_PANEL_X + LEFT_PANEL_WIDTH / 2, LEFT_PANEL_Y + LEFT_PANEL_HEIGHT / 2, LEFT_PANEL_WIDTH, LEFT_PANEL_HEIGHT, 0x0a1026, 0.98).setStrokeStyle(1, 0x2b3662);
+    this.add.rectangle(RIGHT_PANEL_X + RIGHT_PANEL_WIDTH / 2, RIGHT_PANEL_Y + MONITOR_PANEL_HEIGHT / 2, RIGHT_PANEL_WIDTH, MONITOR_PANEL_HEIGHT, 0x111631, 0.98).setStrokeStyle(1, 0x2c3661);
+    this.add.rectangle(RIGHT_PANEL_X + RIGHT_PANEL_WIDTH / 2, ACTION_PANEL_Y + ACTION_PANEL_HEIGHT / 2, RIGHT_PANEL_WIDTH, ACTION_PANEL_HEIGHT, 0x111631, 0.98).setStrokeStyle(1, 0x2c3661);
+    this.add.rectangle(width / 2, FOOTER_TOP + FOOTER_HEIGHT / 2, width - 16, FOOTER_HEIGHT, 0x10162f, 0.98).setStrokeStyle(1, 0x273058);
   }
 
   private setupRosterDragging(): void {
@@ -259,6 +293,8 @@ export class LabSliceScene extends Phaser.Scene {
     this.renderRoster();
     this.renderMonitor();
     this.renderRightPanel();
+    this.renderFooter();
+    if (this.breedingDetailOpen && this.page === 'breed') this.renderBreedingDetail();
     if (this.detailTargetId) this.renderTargetDetail();
     if (this.traitDetail) this.renderTraitDetail();
     if (this.helpSection) this.renderHelp();
@@ -266,70 +302,76 @@ export class LabSliceScene extends Phaser.Scene {
   }
 
   private renderHeader(): void {
-    this.button(24, 12, 92, 26, '推进一天', !this.pendingEvent, () => this.advanceDay(), 0x6d28d9);
+    const { width } = this.scale;
+    const infiltrating = this.cards.filter((card) => !!card.mission).length;
+    const pregnant = this.cards.filter((card) => !!card.pregnancy).length;
+    const averageHealth = this.cards.length ? Math.round(this.cards.reduce((sum, card) => sum + card.health, 0) / this.cards.length) : 0;
+    this.ui.push(
+      this.add.rectangle(46, 36, 40, 40, 0x2b1848, 0.98).setStrokeStyle(1, 0xb55cff),
+      this.add.text(46, 36, 'DNA', { fontSize: '14px', color: '#ff8af0', fontStyle: 'bold' }).setOrigin(0.5),
+      this.add.text(78, 22, '生化实验室切片', { fontSize: '23px', color: '#fff7fb', fontStyle: 'bold' })
+    );
+    this.button(280, 20, 116, 32, '推进一天', !this.pendingEvent, () => this.advanceDay(), 0x4338ca);
+    this.ui.push(
+      this.add.text(430, 24, `日期 ${this.day}`, { fontSize: '11px', color: '#dbe3ff', fontStyle: 'bold' }),
+      this.add.text(498, 24, `资金 ${this.money}`, { fontSize: '11px', color: '#ffe082', fontStyle: 'bold' }),
+      this.add.text(576, 24, `样本 ${this.samples.length}`, { fontSize: '11px', color: '#60a5fa', fontStyle: 'bold' }),
+      this.add.text(654, 24, `潜入 ${infiltrating}`, { fontSize: '11px', color: '#93c5fd', fontStyle: 'bold' }),
+      this.add.text(734, 24, `怀孕 ${pregnant}`, { fontSize: '11px', color: '#f9a8d4', fontStyle: 'bold' }),
+      this.add.text(812, 24, `暴露 ${this.exposureRisk}/100`, { fontSize: '11px', color: '#86efac', fontStyle: 'bold' }),
+      this.add.text(928, 24, `平均健康 ${averageHealth}`, { fontSize: '11px', color: '#dbe3ff', fontStyle: 'bold' })
+    );
+    this.button(width - 70, 18, 34, 34, '?', !this.pendingEvent, () => {
+      this.helpSection = this.page === 'breed' || this.page === 'assign' ? 'actions' : 'library';
+      this.render();
+    }, 0x253058);
   }
 
   private renderSectionHelpButtons(): void {
-    this.button(610, 68, 24, 20, '?', !this.helpSection && !this.pendingEvent, () => {
+    this.button(LEFT_PANEL_X + LEFT_PANEL_WIDTH - 34, 96, 26, 22, '?', !this.helpSection && !this.pendingEvent, () => {
       this.helpSection = 'library';
       this.render();
     }, 0x4c1d95);
-    this.button(884, 68, 24, 20, '?', !this.helpSection && !this.pendingEvent, () => {
+    this.button(RIGHT_PANEL_X + RIGHT_PANEL_WIDTH - 34, 96, 26, 22, '?', !this.helpSection && !this.pendingEvent, () => {
       this.helpSection = 'monitor';
       this.render();
     }, 0x4c1d95);
-    this.button(884, 334, 24, 20, '?', !this.helpSection && !this.pendingEvent, () => {
+    this.button(RIGHT_PANEL_X + RIGHT_PANEL_WIDTH - 34, ACTION_PANEL_Y + 16, 26, 22, '?', !this.helpSection && !this.pendingEvent, () => {
       this.helpSection = 'actions';
       this.render();
     }, 0x4c1d95);
   }
 
   private renderRosterTabs(): void {
-    this.button(24, 98, 72, 22, '女性', this.rosterTab !== 'female', () => { this.rosterTab = 'female'; this.rosterScroll = 0; this.render(); }, 0x7c3aed);
-    this.button(104, 98, 72, 22, '男性', this.rosterTab !== 'male', () => { this.rosterTab = 'male'; this.rosterScroll = 0; this.render(); }, 0x1d4ed8);
-    this.button(184, 98, 92, 22, '带回样本', this.rosterTab !== 'sample', () => { this.rosterTab = 'sample'; this.rosterScroll = 0; this.render(); }, 0x0f766e);
+    this.ui.push(this.add.text(30, 98, '卡库', { fontSize: '16px', color: '#fff7fb', fontStyle: 'bold' }));
+    this.button(30, 124, 74, 28, '女性', this.rosterTab !== 'female', () => { this.rosterTab = 'female'; this.rosterScroll = 0; this.render(); }, 0x2c2351);
+    this.button(112, 124, 74, 28, '男性', this.rosterTab !== 'male', () => { this.rosterTab = 'male'; this.rosterScroll = 0; this.render(); }, 0x1d4ed8);
+    this.button(194, 124, 104, 28, '带回样本', this.rosterTab !== 'sample', () => { this.rosterTab = 'sample'; this.rosterScroll = 0; this.render(); }, 0x0f766e);
   }
 
   private renderMonitor(): void {
-    const infiltrating = this.cards.filter((card) => !!card.mission).length;
-    const pregnant = this.cards.filter((card) => !!card.pregnancy).length;
-    const averageHealth = this.cards.length ? Math.round(this.cards.reduce((sum, card) => sum + card.health, 0) / this.cards.length) : 0;
-    const decliningCount = this.cards.filter((card) => card.lifeStage === 'declining' || card.lifeStage === 'aging').length;
-    const visibleEntries = 4;
+    const visibleEntries = 8;
     this.monitorScroll = this.clampMonitorScroll(this.monitorScroll);
-    const recent = this.log.slice(this.monitorScroll, this.monitorScroll + visibleEntries).map((entry) => this.formatMonitorEntry(entry, 18, 2));
-    const activeEffects = this.activeEffects.slice(0, 2);
-    const screenX = 690;
-    const screenY = 94;
+    const recent = this.log.slice(this.monitorScroll, this.monitorScroll + visibleEntries).map((entry) => this.formatMonitorEntry(entry, 24, 2));
+    const panelX = RIGHT_PANEL_X + 10;
+    const panelY = RIGHT_PANEL_Y + 12;
+    const screenX = RIGHT_PANEL_X + 16;
+    const screenY = RIGHT_PANEL_Y + 42;
     this.ui.push(
-      this.add.rectangle(814, 204, 228, 228, 0x0b1319, 0.98).setStrokeStyle(2, 0x38bdf8),
-      this.add.text(screenX + 8, screenY + 4, '运行概况', { fontSize: '13px', color: '#67e8f9', fontStyle: 'bold' }),
-      this.add.text(screenX + 8, screenY + 24, `日期 ${this.day} | 资金 ${this.money}`, { fontSize: '11px', color: '#a5f3fc' }),
-      this.add.text(screenX + 8, screenY + 40, `样本 ${this.samples.length} | 潜入 ${infiltrating}`, { fontSize: '11px', color: '#a5f3fc' }),
-      this.add.text(screenX + 8, screenY + 56, `怀孕 ${pregnant} | 暴露 ${this.exposureRisk}/100`, { fontSize: '11px', color: '#a5f3fc' }),
-      this.add.text(screenX + 8, screenY + 72, `平均健康 ${averageHealth} | 衰退/老化 ${decliningCount}`, { fontSize: '11px', color: '#a5f3fc' }),
-      this.add.text(screenX + 8, screenY + 94, '持续状态', { fontSize: '11px', color: '#67e8f9', fontStyle: 'bold' }),
-      this.add.text(screenX + 8, screenY + 128, '近期事件', { fontSize: '11px', color: '#67e8f9', fontStyle: 'bold' }),
-      this.add.text(screenX + 128, screenY + 128, `${Math.min(this.monitorScroll + 1, Math.max(1, this.log.length))}/${Math.max(1, this.log.length)}`, { fontSize: '8px', color: '#67e8f9' })
+      this.add.text(panelX + 24, panelY + 8, '~', { fontSize: '14px', color: '#8eb4ff', fontStyle: 'bold' }).setOrigin(0.5),
+      this.add.text(panelX + 42, panelY + 2, '实验室显示屏', { fontSize: '14px', color: '#ecf0ff', fontStyle: 'bold' }),
+      this.add.rectangle(RIGHT_PANEL_X + RIGHT_PANEL_WIDTH / 2, RIGHT_PANEL_Y + 190, RIGHT_PANEL_WIDTH - 36, 348, 0x1b2243, 0.98).setStrokeStyle(1, 0x303b66),
+      this.add.text(screenX + 8, screenY + 4, '最近消息', { fontSize: '11px', color: '#8ab2ff', fontStyle: 'bold' }),
+      this.add.text(screenX + RIGHT_PANEL_WIDTH - 76, screenY + 4, `${Math.min(this.monitorScroll + 1, Math.max(1, this.log.length))}/${Math.max(1, this.log.length)}`, { fontSize: '8px', color: '#8ab2ff' })
     );
-    if (activeEffects.length) {
-      activeEffects.forEach((effect, index) => {
-        this.ui.push(this.add.text(screenX + 8, screenY + 108 + index * 10, `- ${effect.title}(${effect.daysRemaining}天): ${effect.description}`, { fontSize: '8px', color: '#d8f9ff', wordWrap: { width: 208 } }));
-      });
-      if (this.activeEffects.length > activeEffects.length) {
-        this.ui.push(this.add.text(screenX + 192, screenY + 118, `+${this.activeEffects.length - activeEffects.length}`, { fontSize: '8px', color: '#67e8f9' }));
-      }
-    } else {
-      this.ui.push(this.add.text(screenX + 8, screenY + 108, '- 当前无持续影响', { fontSize: '8px', color: '#94a3b8' }));
-    }
     recent.forEach((entry, index) => {
-      this.ui.push(this.add.text(screenX + 8, screenY + 148 + index * 22, `> ${entry}`, { fontSize: '9px', color: '#d8f9ff', lineSpacing: 2 }));
+      this.ui.push(this.add.text(screenX + 8, screenY + 30 + index * 38, `• ${entry}`, { fontSize: '9px', color: '#d8f9ff', lineSpacing: 3 }));
     });
   }
   private renderRoster(): void {
-    const width = 620;
+    const width = 1024;
     const height = ROSTER_CARD_HEIGHT;
-    const startX = 18;
+    const startX = 28;
     const startY = ROSTER_VIEW_TOP;
     const gap = ROSTER_CARD_GAP;
     const bottom = ROSTER_VIEW_BOTTOM;
@@ -342,20 +384,23 @@ export class LabSliceScene extends Phaser.Scene {
       const x = startX;
       const y = startY + index * (height + gap) - this.rosterScroll;
       if (y + height < startY || y > bottom) return;
-      const fill = card.sex === '女' ? 0x2a1631 : 0x142133;
-      const stroke = card.sex === '女' ? 0xf472b6 : 0x60a5fa;
-      this.ui.push(this.add.rectangle(x + width / 2, y + height / 2, width, height, fill, 0.97).setStrokeStyle(2, stroke));
-      this.renderCardAvatar(card, x + 42, y + 44);
+      const fill = 0x151b39;
+      const stroke = card.sex === '女' ? 0xc455ff : 0x2f80ff;
       this.ui.push(
-        this.add.text(x + 84, y + 10, `${card.name} 第${card.generation}代`, { fontSize: '15px', color: '#fff7fb', fontStyle: 'bold' }),
-        this.add.text(x + 84, y + 30, this.cardSummaryLine(card), { fontSize: '11px', color: card.sex === '女' ? '#f9a8d4' : '#7dd3fc', wordWrap: { width: 316 } }),
-        this.add.text(x + 84, y + 48, `${this.cardStateLabel(card)} | ${card.tags.join(' | ')}`, { fontSize: '11px', color: '#fde68a', wordWrap: { width: 316 } }),
-        this.add.text(x + 84, y + 114, `缺陷: ${card.expressedDefects.length ? card.expressedDefects.join('、') : '无'}`, { fontSize: '10px', color: card.expressedDefects.length ? '#fda4af' : '#cbd5e1', wordWrap: { width: 316 } })
+        this.add.rectangle(x + width / 2, y + height / 2, width, height, fill, 0.98).setStrokeStyle(1, stroke),
+        this.add.line(x + 192, y + 64, 0, 0, 392, 0, 0x283257, 0.8).setOrigin(0, 0)
       );
-      this.renderTraitChips(card, x + 84, y + 68);
-      this.renderStatBadges(card.visibleStats, x + 84, y + 88);
-      this.renderCardButtons(card, x + 428, y + 20);
+      this.renderCardAvatar(card, x + 46, y + 48);
+      this.ui.push(
+        this.add.text(x + 98, y + 12, `${card.name} 第${card.generation}代`, { fontSize: '16px', color: '#fff7fb', fontStyle: 'bold' }),
+        this.add.text(x + 98, y + 34, this.cardSummaryLine(card), { fontSize: '10px', color: card.sex === '女' ? '#f9a8d4' : '#7dd3fc', wordWrap: { width: 420 } }),
+        this.add.text(x + 98, y + 52, `${this.cardStateLabel(card)} | ${card.tags.join(' | ')}`, { fontSize: '10px', color: '#f6dc6b', wordWrap: { width: 420 } })
+      );
+      this.renderTraitChips(card, x + 98, y + 68);
+      this.renderStatBadges(card.visibleStats, x + 98, y + 88);
+      this.renderCardButtons(card, x + 730, y + 22);
     });
+    this.renderRosterFooter();
   }
 
   private renderSamples(startX: number, startY: number, width: number, height: number, gap: number, bottom: number): void {
@@ -364,20 +409,22 @@ export class LabSliceScene extends Phaser.Scene {
       const y = startY + index * (height + gap) - this.rosterScroll;
       if (y + height < startY || y > bottom) return;
       const active = this.fatherSampleId === sample.id;
-      this.ui.push(this.add.rectangle(x + width / 2, y + height / 2, width, height, active ? 0x15314a : 0x132430, 0.97).setStrokeStyle(2, active ? 0x93c5fd : 0x38bdf8));
+      this.ui.push(this.add.rectangle(x + width / 2, y + height / 2, width, height, active ? 0x15314a : 0x132430, 0.98).setStrokeStyle(1, active ? 0x93c5fd : 0x38bdf8));
       this.ui.push(
         this.add.text(x + 24, y + 12, sample.name, { fontSize: '15px', color: '#e0f2fe', fontStyle: 'bold' }),
-        this.add.text(x + 24, y + 32, `来源: ${sample.source} | 质量 ${sample.quality} | 剩余 ${sample.usesLeft}`, { fontSize: '10px', color: '#93c5fd' }),
-        this.add.text(x + 24, y + 48, `标签: ${sample.tags.join(' | ')}`, { fontSize: '10px', color: '#bfdbfe', wordWrap: { width: 380 } }),
-        this.add.text(x + 24, y + 66, `倾向: ${this.projectedTendency(this.computeStats(sample.visibleGenome)).join(' / ')}`, { fontSize: '9px', color: '#e0f2fe', wordWrap: { width: 380 } })
+        this.add.text(x + 24, y + 34, `来源: ${sample.source} | 质量 ${sample.quality} | 剩余 ${sample.usesLeft}`, { fontSize: '10px', color: '#93c5fd' }),
+        this.add.text(x + 24, y + 52, `标签: ${sample.tags.join(' | ')}`, { fontSize: '10px', color: '#bfdbfe', wordWrap: { width: 420 } }),
+        this.add.text(x + 24, y + 72, `倾向: ${this.projectedTendency(this.computeStats(sample.visibleGenome)).join(' / ')}`, { fontSize: '9px', color: '#e0f2fe', wordWrap: { width: 420 } })
       );
-      this.button(x + 474, y + 36, 96, 24, active ? '取消样本' : '选为父本', this.page === 'breed', () => this.setFatherSample(sample.id), 0x1d4ed8);
+      this.button(x + 860, y + 44, 120, 24, active ? '取消样本' : '选为父本', this.page === 'breed', () => this.setFatherSample(sample.id), 0x1d4ed8);
     });
+    this.renderRosterFooter();
   }
 
   private renderRightPanel(): void {
-    this.button(690, 340, 92, 22, '繁育', this.page !== 'breed', () => { this.page = 'breed'; this.render(); }, 0x7c3aed);
-    this.button(792, 340, 92, 22, '委托', this.page !== 'assign', () => { this.page = 'assign'; this.render(); }, 0x047857);
+    this.ui.push(this.add.text(RIGHT_PANEL_X + 18, ACTION_PANEL_Y + 12, '主操控区', { fontSize: '16px', color: '#fff7fb', fontStyle: 'bold' }));
+    this.button(RIGHT_PANEL_X + 124, ACTION_PANEL_Y + 14, 58, 22, '繁育', this.page !== 'breed', () => { this.page = 'breed'; this.render(); }, 0x2c2351);
+    this.button(RIGHT_PANEL_X + 188, ACTION_PANEL_Y + 14, 58, 22, '委托', this.page !== 'assign', () => { this.page = 'assign'; this.render(); }, 0x047857);
     if (this.page === 'breed') {
       this.renderBreedingPanel();
       return;
@@ -391,43 +438,112 @@ export class LabSliceScene extends Phaser.Scene {
     const sample = this.sample(this.fatherSampleId);
     const summary = this.breedingSummary();
     this.ui.push(
-      this.add.text(690, 372, '繁育台', { fontSize: '13px', color: '#f5d0fe', fontStyle: 'bold' }),
-      this.add.text(690, 392, mother ? `${mother.name} | ${LIFE_STAGE_LABELS[mother.lifeStage]} | 体力${mother.stamina} | 健康${mother.health}` : '母本: 未选择', { fontSize: '9px', color: mother ? '#f5d0fe' : '#94a3b8', wordWrap: { width: 196 } }),
-      this.add.text(690, 412, father ? `${father.name} | 血系值${father.bloodlineValue}` : sample ? `${sample.name} | 质量${sample.quality}` : '父本: 未选择', { fontSize: '9px', color: father || sample ? '#dbeafe' : '#94a3b8', wordWrap: { width: 196 } }),
-      this.add.text(690, 438, `成功率 ${summary.successBand} | 血系风险 ${summary.bloodlineRisk}`, { fontSize: '10px', color: '#fde68a' }),
-      this.add.text(690, 454, `孕程风险 ${summary.gestationRisk} | 心智风险 ${summary.mentalRisk}`, { fontSize: '10px', color: '#fde68a' }),
-      this.add.text(690, 478, `费用 ${summary.cost}`, { fontSize: '11px', color: '#bfdbfe', fontStyle: 'bold' })
+      this.add.text(RIGHT_PANEL_X + 16, ACTION_PANEL_Y + 54, '教育台', { fontSize: '13px', color: '#f5d0fe', fontStyle: 'bold' }),
+      this.add.text(RIGHT_PANEL_X + 16, ACTION_PANEL_Y + 76, mother ? `母本: ${mother.name} | ${LIFE_STAGE_LABELS[mother.lifeStage]} | 体力${mother.stamina} | 健康${mother.health}` : '母本: 未选择', { fontSize: '10px', color: mother ? '#f5d0fe' : '#94a3b8', wordWrap: { width: 220 } }),
+      this.add.text(RIGHT_PANEL_X + 16, ACTION_PANEL_Y + 98, father ? `父本: ${father.name} | 遗传潜力${father.bloodlineValue}` : sample ? `外部样本: ${sample.name} | 质量${sample.quality}` : '父本: 未选择', { fontSize: '10px', color: father || sample ? '#dbeafe' : '#94a3b8', wordWrap: { width: 220 } }),
+      this.add.text(RIGHT_PANEL_X + 16, ACTION_PANEL_Y + 126, `预计好特质 ${summary.positiveRange[0]}~${summary.positiveRange[1]}`, { fontSize: '11px', color: '#86efac', fontStyle: 'bold' }),
+      this.add.text(RIGHT_PANEL_X + 16, ACTION_PANEL_Y + 146, `预计坏特质 ${summary.negativeRange[0]}~${summary.negativeRange[1]}`, { fontSize: '11px', color: '#f6dc6b', fontStyle: 'bold' }),
+      this.add.text(RIGHT_PANEL_X + 16, ACTION_PANEL_Y + 166, `纯血概率 ${summary.purebloodChance}% | 劣化风险 ${summary.degradationChance}%`, { fontSize: '11px', color: '#fde68a', fontStyle: 'bold' }),
+      this.add.text(RIGHT_PANEL_X + 16, ACTION_PANEL_Y + 186, `费用 ${summary.cost}`, { fontSize: '12px', color: '#ecf3ff', fontStyle: 'bold' })
     );
-    this.button(690, 510, 92, 22, '清空选择', !!this.motherId || !!this.fatherCardId || !!this.fatherSampleId, () => { this.motherId = null; this.fatherCardId = null; this.fatherSampleId = null; this.render(); }, 0x475569);
-    this.button(794, 510, 92, 22, '开始繁育', summary.canBreed, () => this.startBreeding(), 0x7c3aed);
+    this.button(RIGHT_PANEL_X + 16, ACTION_PANEL_Y + 210, 74, 24, '配对详情', !!mother && (!!father || !!sample), () => { this.breedingDetailOpen = true; this.render(); }, 0x334155);
+    this.button(RIGHT_PANEL_X + 96, ACTION_PANEL_Y + 210, 90, 24, '开始繁育', summary.canBreed, () => this.startBreeding(), 0x7c3aed);
+    this.button(RIGHT_PANEL_X + 192, ACTION_PANEL_Y + 210, 54, 24, '清空', !!this.motherId || !!this.fatherCardId || !!this.fatherSampleId, () => { this.motherId = null; this.fatherCardId = null; this.fatherSampleId = null; this.breedingDetailOpen = false; this.render(); }, 0x334155);
+  }
+
+  private renderBreedingDetail(): void {
+    const mother = this.card(this.motherId);
+    const father = this.card(this.fatherCardId);
+    const sample = this.sample(this.fatherSampleId);
+    const summary = this.breedingSummary();
+    const { width, height } = this.scale;
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const panelWidth = 680;
+    const panelHeight = 390;
+    const left = centerX - panelWidth / 2;
+    const top = centerY - panelHeight / 2;
+    const blocker = this.add.rectangle(centerX, centerY, width, height, 0x05030a, 0.82).setInteractive({ useHandCursor: true }).on('pointerdown', () => {
+      this.breedingDetailOpen = false;
+      this.render();
+    });
+    const panel = this.add.rectangle(centerX, centerY, panelWidth, panelHeight, 0x16111e, 0.98).setStrokeStyle(2, 0x8b5cf6).setInteractive();
+    this.ui.push(
+      blocker,
+      panel,
+      this.add.text(left + 24, top + 24, '配对详情', { fontSize: '22px', color: '#fff7fb', fontStyle: 'bold' }),
+      this.add.text(left + 24, top + 60, `母本: ${mother ? `${mother.name} | 体力${mother.stamina} | 健康${mother.health}` : '未选择'}`, { fontSize: '12px', color: mother ? '#f5d0fe' : '#94a3b8' }),
+      this.add.text(left + 24, top + 80, `父本: ${father ? `${father.name} | 遗传潜力${father.bloodlineValue}` : sample ? `${sample.name} | 质量${sample.quality}` : '未选择'}`, { fontSize: '12px', color: father || sample ? '#dbeafe' : '#94a3b8' }),
+      this.add.text(left + 24, top + 116, `启动倾向: ${summary.successBand}`, { fontSize: '13px', color: '#fde68a', fontStyle: 'bold' }),
+      this.add.text(left + 24, top + 138, `预计好特质: ${summary.positiveRange[0]} ~ ${summary.positiveRange[1]}`, { fontSize: '13px', color: '#86efac' }),
+      this.add.text(left + 24, top + 158, `预计坏特质: ${summary.negativeRange[0]} ~ ${summary.negativeRange[1]}`, { fontSize: '13px', color: '#fca5a5' }),
+      this.add.text(left + 24, top + 180, `纯血概率: ${summary.purebloodChance}%`, { fontSize: '13px', color: '#fde68a' }),
+      this.add.text(left + 24, top + 200, `劣化风险: ${summary.degradationChance}%`, { fontSize: '13px', color: '#fb7185' }),
+      this.add.text(left + 24, top + 222, `费用: ${summary.cost}`, { fontSize: '13px', color: '#bfdbfe', fontStyle: 'bold' }),
+      this.add.text(left + 24, top + 258, '纯血加分项', { fontSize: '12px', color: '#86efac', fontStyle: 'bold' }),
+      this.add.text(left + 24, top + 278, summary.purebloodFactors.length ? summary.purebloodFactors.map((line) => `- ${line}`).join('\n') : '- 当前加分项较少', { fontSize: '11px', color: '#d9f99d', lineSpacing: 4 }),
+      this.add.text(left + 310, top + 258, '劣化加重项', { fontSize: '12px', color: '#fca5a5', fontStyle: 'bold' }),
+      this.add.text(left + 310, top + 278, summary.degradationFactors.length ? summary.degradationFactors.map((line) => `- ${line}`).join('\n') : '- 当前暂无明显劣化压力', { fontSize: '11px', color: '#fecdd3', lineSpacing: 4 })
+    );
+    this.button(left + panelWidth - 80, top + 20, 56, 22, '关闭', true, () => { this.breedingDetailOpen = false; this.render(); }, 0x7f1d1d);
+    this.button(left + panelWidth - 144, top + panelHeight - 42, 120, 26, '开始繁育', summary.canBreed, () => { this.breedingDetailOpen = false; this.startBreeding(); }, 0x7c3aed);
   }
 
   private renderAssignmentPanel(): void {
     const operative = this.card(this.assignmentCardId);
     this.ui.push(
-      this.add.text(690, 372, '委托台', { fontSize: '13px', color: '#bbf7d0', fontStyle: 'bold' }),
-      this.add.text(690, 392, operative ? `${operative.name} | 年龄${operative.ageDays} | 健康${operative.health} | 忠诚${operative.loyalty}` : '特工: 未选择', { fontSize: '10px', color: operative ? '#dcfce7' : '#94a3b8', wordWrap: { width: 196 } })
+      this.add.text(RIGHT_PANEL_X + 16, ACTION_PANEL_Y + 54, '委托台', { fontSize: '13px', color: '#bbf7d0', fontStyle: 'bold' }),
+      this.add.text(RIGHT_PANEL_X + 16, ACTION_PANEL_Y + 76, operative ? `特工: ${operative.name} | 年龄${operative.ageDays} | 健康${operative.health} | 忠诚${operative.loyalty}` : '特工: 未选择', { fontSize: '10px', color: operative ? '#dcfce7' : '#94a3b8', wordWrap: { width: 220 } })
     );
     this.targets.forEach((target, index) => {
-      const y = 416 + index * 48;
+      const y = ACTION_PANEL_Y + 96 + index * 38;
       const active = !!target.assignedCardId;
       const assigned = this.card(target.assignedCardId);
       const stroke = this.missionDifficultyColor(target.difficulty);
       const difficultyLabel = this.missionDifficultyLabel(target.difficulty);
       this.ui.push(
-        this.add.rectangle(814, y + 18, 228, 40, active ? 0x1d2f2a : 0x24152b, 0.98).setStrokeStyle(1, active ? 0x10b981 : stroke),
-        this.add.text(698, y + 2, `${difficultyLabel} | ${target.name} · ${target.title}`, { fontSize: '9px', color: '#fff7fb', fontStyle: 'bold' }),
-        this.add.text(698, y + 14, target.purpose, { fontSize: '8px', color: '#fde68a', wordWrap: { width: 126 } })
+        this.add.rectangle(RIGHT_PANEL_X + RIGHT_PANEL_WIDTH / 2, y + 14, 228, 32, active ? 0x1d2f2a : 0x24152b, 0.98).setStrokeStyle(1, active ? 0x10b981 : stroke),
+        this.add.text(RIGHT_PANEL_X + 20, y + 2, `${difficultyLabel} | ${target.name} · ${target.title}`, { fontSize: '9px', color: '#fff7fb', fontStyle: 'bold' }),
+        this.add.text(RIGHT_PANEL_X + 20, y + 14, target.purpose, { fontSize: '8px', color: '#fde68a', wordWrap: { width: 128 } })
       );
       if (active) {
-        this.ui.push(this.add.text(698, y + 28, `${assigned?.name ?? '失联'} | ${target.daysRemaining}天 | 风险${Math.round(target.failureRisk)}%`, { fontSize: '8px', color: '#bbf7d0', wordWrap: { width: 126 } }));
+        this.ui.push(this.add.text(RIGHT_PANEL_X + 20, y + 24, `${assigned?.name ?? '失联'} | ${target.daysRemaining}天 | 风险${Math.round(target.failureRisk)}%`, { fontSize: '8px', color: '#bbf7d0', wordWrap: { width: 126 } }));
       } else {
-        this.ui.push(this.add.text(698, y + 28, `报酬 ${target.reward} | 压力 ${target.pressure}`, { fontSize: '8px', color: '#bfdbfe' }));
+        this.ui.push(this.add.text(RIGHT_PANEL_X + 20, y + 24, `报酬 ${target.reward} | 压力 ${target.pressure}`, { fontSize: '8px', color: '#bfdbfe' }));
       }
-      this.button(830, y + 2, 32, 16, '详情', true, () => { this.detailTargetId = target.id; this.render(); }, 0x6d28d9);
-      this.button(866, y + 2, 24, 16, '换', !active && this.money >= 4, () => this.refreshTarget(target.id), 0x0f766e);
-      this.button(830, y + 22, 60, 16, active ? '进行中' : '派出', !active && this.canAssign(target.id), () => this.assignTarget(target.id), 0x047857);
+      this.button(RIGHT_PANEL_X + 152, y + 2, 32, 16, '详情', true, () => { this.detailTargetId = target.id; this.render(); }, 0x6d28d9);
+      this.button(RIGHT_PANEL_X + 188, y + 2, 24, 16, '换', !active && this.money >= 4, () => this.refreshTarget(target.id), 0x0f766e);
+      this.button(RIGHT_PANEL_X + 152, y + 18, 60, 14, active ? '进行中' : '派出', !active && this.canAssign(target.id), () => this.assignTarget(target.id), 0x047857);
     });
+  }
+
+  private renderRosterFooter(): void {
+    const footerY = LEFT_PANEL_Y + LEFT_PANEL_HEIGHT - 34;
+    this.ui.push(
+      this.add.line(LEFT_PANEL_X + 18, footerY - 8, 0, 0, LEFT_PANEL_WIDTH - 36, 0, 0x24315a, 0.8).setOrigin(0, 0),
+      this.add.text(LEFT_PANEL_X + 24, footerY + 6, '滚轮或拖动浏览卡库', { fontSize: '10px', color: '#7d8db7' }),
+      this.add.text(LEFT_PANEL_X + LEFT_PANEL_WIDTH - 116, footerY + 6, `共 ${this.rosterTab === 'sample' ? this.samples.length : this.filteredCards().length} 张切片`, { fontSize: '11px', color: '#aeb9de' })
+    );
+  }
+
+  private renderFooter(): void {
+    const infiltrating = this.cards.filter((card) => !!card.mission).length;
+    const labScore = this.day * 18 + this.totalBirths * 42 + this.totalAssignments * 28;
+    const level = Math.max(1, Math.floor(labScore / 260) + 1);
+    const current = labScore % 260;
+    const barWidth = 108;
+    this.ui.push(
+      this.add.text(38, FOOTER_TOP + 12, `实验室等级 Lv.${level}`, { fontSize: '11px', color: '#dbe3ff', fontStyle: 'bold' }),
+      this.add.rectangle(190, FOOTER_TOP + 18, barWidth, 8, 0x1c2446, 0.98).setStrokeStyle(1, 0x2c3765),
+      this.add.rectangle(136 + (current / 260) * barWidth / 2, FOOTER_TOP + 18, (current / 260) * barWidth, 8, 0x2f85ff, 0.98),
+      this.add.text(248, FOOTER_TOP + 12, `${current}/260`, { fontSize: '10px', color: '#8ba2dd' }),
+      this.add.text(396, FOOTER_TOP + 12, `系统状态 正常`, { fontSize: '11px', color: '#86efac', fontStyle: 'bold' }),
+      this.add.text(566, FOOTER_TOP + 12, `进行中任务 ${infiltrating}`, { fontSize: '11px', color: '#dbe3ff' }),
+      this.add.text(770, FOOTER_TOP + 12, `日志 ${this.log.length}`, { fontSize: '11px', color: '#dbe3ff' }),
+      this.add.text(926, FOOTER_TOP + 12, `活跃效果 ${this.activeEffects.length}`, { fontSize: '11px', color: '#dbe3ff' }),
+      this.add.text(1166, FOOTER_TOP + 12, `Day ${this.day}`, { fontSize: '11px', color: '#dbe3ff' }),
+      this.add.text(1474, FOOTER_TOP + 12, '设置', { fontSize: '11px', color: '#8ba2dd' }).setOrigin(1, 0)
+    );
   }
 
   private renderTargetDetail(): void {
@@ -435,23 +551,35 @@ export class LabSliceScene extends Phaser.Scene {
     if (!target) { this.detailTargetId = null; return; }
     const difficultyLabel = this.missionDifficultyLabel(target.difficulty);
     const difficultyColor = this.missionDifficultyColor(target.difficulty);
+    const { width, height } = this.scale;
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const panelWidth = 720;
+    const panelHeight = 406;
+    const left = centerX - panelWidth / 2;
+    const top = centerY - panelHeight / 2;
+    const blocker = this.add.rectangle(centerX, centerY, width, height, 0x05030a, 0.82).setInteractive({ useHandCursor: true }).on('pointerdown', () => {
+      this.detailTargetId = null;
+      this.render();
+    });
+    const panel = this.add.rectangle(centerX, centerY, panelWidth, panelHeight, 0x16111e, 0.98).setStrokeStyle(2, difficultyColor).setInteractive();
     this.ui.push(
-      this.add.rectangle(480, 270, 940, 500, 0x05030a, 0.82),
-      this.add.rectangle(480, 270, 720, 406, 0x16111e, 0.98).setStrokeStyle(2, difficultyColor),
-      this.add.text(148, 90, `${target.name} · ${target.title}`, { fontSize: '22px', color: '#fff7fb', fontStyle: 'bold' }),
-      this.add.text(148, 122, `${difficultyLabel} | 目标目的: ${target.purpose}`, { fontSize: '13px', color: '#fde68a' }),
-      this.add.text(148, 144, `报酬 ${target.reward} | 持续 ${target.duration} 天 | 魅力 ${target.targetCharisma} | 压力 ${target.pressure}`, { fontSize: '12px', color: '#a7f3d0' })
+      blocker,
+      panel,
+      this.add.text(left + 28, top + 22, `${target.name} · ${target.title}`, { fontSize: '22px', color: '#fff7fb', fontStyle: 'bold' }),
+      this.add.text(left + 28, top + 54, `${difficultyLabel} | 目标目的: ${target.purpose}`, { fontSize: '13px', color: '#fde68a' }),
+      this.add.text(left + 28, top + 76, `报酬 ${target.reward} | 持续 ${target.duration} 天 | 魅力 ${target.targetCharisma} | 压力 ${target.pressure}`, { fontSize: '12px', color: '#a7f3d0' })
     );
     target.clues.forEach((clue, index) => {
-      const y = 182 + index * 54;
-      this.ui.push(this.add.rectangle(396, y + 16, 500, 40, 0x0b1319, 0.94).setStrokeStyle(1, 0x38bdf8), this.add.text(164, y + 2, clue.label, { fontSize: '11px', color: '#67e8f9', fontStyle: 'bold' }));
-      if (clue.unlocked) this.ui.push(this.add.text(164, y + 18, this.wrapUiText(clue.text, 28), { fontSize: '10px', color: '#d8f9ff' }));
+      const y = top + 114 + index * 54;
+      this.ui.push(this.add.rectangle(centerX, y + 16, 500, 40, 0x0b1319, 0.94).setStrokeStyle(1, 0x38bdf8), this.add.text(left + 44, y + 2, clue.label, { fontSize: '11px', color: '#67e8f9', fontStyle: 'bold' }));
+      if (clue.unlocked) this.ui.push(this.add.text(left + 44, y + 18, this.wrapUiText(clue.text, 28), { fontSize: '10px', color: '#d8f9ff' }));
       else {
-        this.ui.push(this.add.text(164, y + 18, '??? 支付资金后解锁。', { fontSize: '10px', color: '#94a3b8' }));
-        this.button(590, y + 10, 86, 18, `解锁 ${clue.cost}`, this.money >= clue.cost && !target.assignedCardId, () => this.unlockClue(target.id, clue.id), 0x0f766e);
+        this.ui.push(this.add.text(left + 44, y + 18, '??? 支付资金后解锁。', { fontSize: '10px', color: '#94a3b8' }));
+        this.button(left + panelWidth - 130, y + 10, 86, 18, `解锁 ${clue.cost}`, this.money >= clue.cost && !target.assignedCardId, () => this.unlockClue(target.id, clue.id), 0x0f766e);
       }
     });
-    this.button(726, 98, 60, 20, '关闭', true, () => { this.detailTargetId = null; this.render(); }, 0x7f1d1d);
+    this.button(left + panelWidth - 88, top + 18, 60, 20, '关闭', true, () => { this.detailTargetId = null; this.render(); }, 0x7f1d1d);
   }
 
   private renderHelp(): void {
@@ -476,34 +604,61 @@ export class LabSliceScene extends Phaser.Scene {
             ]
           : [
               '1. 主操作区分为繁育与委托两个页签。',
-              '2. 繁育页只显示配对状态、风险带与费用，详细规则放在说明中。',
-              '3. 委托页会显示目标卡片、风险与可执行操作，目标难度会影响线索、需求和报酬。',
-              '4. 推进时间后可能触发事件，它们代表制造公司对赏金猎人、舆论和合法化推进的应对。',
+              '2. 繁育页只显示预计好特质、预计坏特质、纯血概率、劣化风险与费用。',
+              '3. 点击“配对详情”可以查看本次配对的加分项与劣化来源，不再把长说明挤在右下角。',
+              '4. 委托页会显示目标卡片、风险与可执行操作，目标难度会影响线索、需求和报酬。',
               '5. 如果按钮不可点，通常是因为角色状态或资源尚未满足条件。'
             ];
+    const { width, height } = this.scale;
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const panelWidth = 710;
+    const panelHeight = 390;
+    const left = centerX - panelWidth / 2;
+    const top = centerY - panelHeight / 2;
+    const blocker = this.add.rectangle(centerX, centerY, width, height, 0x05030a, 0.8).setInteractive({ useHandCursor: true }).on('pointerdown', () => {
+      this.helpSection = null;
+      this.render();
+    });
+    const panel = this.add.rectangle(centerX, centerY, panelWidth, panelHeight, 0x1a1222, 0.98).setStrokeStyle(2, 0x7e22ce).setInteractive();
     this.ui.push(
-      this.add.rectangle(480, 270, 940, 500, 0x05030a, 0.8),
-      this.add.rectangle(480, 270, 710, 390, 0x1a1222, 0.98).setStrokeStyle(2, 0x7e22ce),
-      this.add.text(220, 100, title, { fontSize: '22px', color: '#fff7fb', fontStyle: 'bold' })
+      blocker,
+      panel,
+      this.add.text(left + 30, top + 24, title, { fontSize: '22px', color: '#fff7fb', fontStyle: 'bold' })
     );
     lines.forEach((line, index) => {
-      this.ui.push(this.add.text(220, 146 + index * 44, this.wrapUiText(line, 32), { fontSize: '13px', color: index % 2 === 0 ? '#f5d0fe' : '#bfdbfe' }));
+      this.ui.push(this.add.text(left + 30, top + 70 + index * 44, this.wrapUiText(line, 32), { fontSize: '13px', color: index % 2 === 0 ? '#f5d0fe' : '#bfdbfe' }));
     });
-    this.button(642, 96, 46, 24, '关闭', true, () => { this.helpSection = null; this.render(); }, 0x7f1d1d);
+    this.button(left + panelWidth - 76, top + 20, 46, 24, '关闭', true, () => { this.helpSection = null; this.render(); }, 0x7f1d1d);
   }
 
   private renderTraitDetail(): void {
     if (!this.traitDetail) return;
     const { trait, ownerName } = this.traitDetail;
-    const stageLabel = trait.stage === 'innate' ? '先天特质' : '成长特质';
+    const stageLabel = `${trait.stage === 'innate' ? '先天特质' : '成长特质'} | ${trait.polarity === 'positive' ? '正面' : '负面'} | ${this.tierLabel(trait.tier, true)}`;
+    const effectLines = this.traitEffectLines(trait);
+    const { width, height } = this.scale;
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const panelWidth = 560;
+    const panelHeight = 300;
+    const left = centerX - panelWidth / 2;
+    const top = centerY - panelHeight / 2;
+    const blocker = this.add.rectangle(centerX, centerY, width, height, 0x05030a, 0.76).setInteractive({ useHandCursor: true }).on('pointerdown', () => {
+      this.traitDetail = null;
+      this.render();
+    });
+    const panel = this.add.rectangle(centerX, centerY, panelWidth, panelHeight, 0x181322, 0.98).setStrokeStyle(2, 0x8b5cf6).setInteractive();
     this.ui.push(
-      this.add.rectangle(480, 270, 940, 500, 0x05030a, 0.76),
-      this.add.rectangle(480, 270, 520, 220, 0x181322, 0.98).setStrokeStyle(2, 0x8b5cf6),
-      this.add.text(246, 180, `${ownerName} · ${trait.name}`, { fontSize: '22px', color: '#fff7fb', fontStyle: 'bold' }),
-      this.add.text(246, 214, stageLabel, { fontSize: '13px', color: '#c4b5fd', fontStyle: 'bold' }),
-      this.add.text(246, 246, this.wrapUiText(trait.description, 26), { fontSize: '14px', color: '#e9d5ff' })
+      blocker,
+      panel,
+      this.add.text(left + 26, top + 28, `${ownerName} · ${trait.name}`, { fontSize: '22px', color: '#fff7fb', fontStyle: 'bold' }),
+      this.add.text(left + 26, top + 62, stageLabel, { fontSize: '13px', color: '#c4b5fd', fontStyle: 'bold' }),
+      this.add.text(left + 26, top + 94, this.wrapUiText(trait.description, 26), { fontSize: '14px', color: '#e9d5ff', lineSpacing: 3 }),
+      this.add.text(left + 26, top + 152, '具体效果', { fontSize: '13px', color: '#fde68a', fontStyle: 'bold' }),
+      this.add.text(left + 26, top + 176, effectLines.join('\n'), { fontSize: '12px', color: '#dbeafe', lineSpacing: 4 })
     );
-    this.button(646, 180, 58, 22, '关闭', true, () => {
+    this.button(left + panelWidth - 84, top + 24, 58, 22, '关闭', true, () => {
       this.traitDetail = null;
       this.render();
     }, 0x7f1d1d);
@@ -512,18 +667,25 @@ export class LabSliceScene extends Phaser.Scene {
   private renderEventModal(): void {
     if (!this.pendingEvent) return;
     const event = this.pendingEvent;
-    const blocker = this.add.rectangle(480, 270, 960, 540, 0x04030a, 0.84).setInteractive();
+    const { width, height } = this.scale;
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const panelWidth = 700;
+    const panelHeight = 360;
+    const left = centerX - panelWidth / 2;
+    const top = centerY - panelHeight / 2;
+    const blocker = this.add.rectangle(centerX, centerY, width, height, 0x04030a, 0.84).setInteractive();
     this.ui.push(blocker);
     this.ui.push(
-      this.add.rectangle(480, 270, 700, 360, 0x181322, 0.98).setStrokeStyle(2, 0xf59e0b),
-      this.add.text(180, 116, '实验室事件', { fontSize: '18px', color: '#fde68a', fontStyle: 'bold' }),
-      this.add.text(180, 148, event.title, { fontSize: '22px', color: '#fff7fb', fontStyle: 'bold' }),
-      this.add.text(180, 184, this.wrapUiText(event.body, 34), { fontSize: '14px', color: '#e9d5ff', lineSpacing: 4 })
+      this.add.rectangle(centerX, centerY, panelWidth, panelHeight, 0x181322, 0.98).setStrokeStyle(2, 0xf59e0b),
+      this.add.text(left + 30, top + 26, '实验室事件', { fontSize: '18px', color: '#fde68a', fontStyle: 'bold' }),
+      this.add.text(left + 30, top + 58, event.title, { fontSize: '22px', color: '#fff7fb', fontStyle: 'bold' }),
+      this.add.text(left + 30, top + 94, this.wrapUiText(event.body, 34), { fontSize: '14px', color: '#e9d5ff', lineSpacing: 4 })
     );
     event.options.forEach((option, index) => {
-      const y = 280 + index * 64;
-      this.ui.push(this.add.text(210, y - 20, this.wrapUiText(option.effectText, 28), { fontSize: '12px', color: '#cbd5e1' }));
-      this.button(180, y, 520, 28, option.label, true, () => this.resolveEventOption(index), 0x7c3aed);
+      const y = top + 190 + index * 64;
+      this.ui.push(this.add.text(left + 60, y - 20, this.wrapUiText(option.effectText, 28), { fontSize: '12px', color: '#cbd5e1' }));
+      this.button(left + 30, y, 520, 28, option.label, true, () => this.resolveEventOption(index), 0x7c3aed);
     });
   }
 
@@ -540,16 +702,19 @@ export class LabSliceScene extends Phaser.Scene {
   }
 
   private renderTraitChips(card: LabCard, x: number, y: number): void {
-    const traits = [...card.innateTraits, ...card.growthTraits].slice(0, 3);
+    const positive = this.positiveTraits(card).slice(0, 2);
+    const negative = this.negativeTraits(card).slice(0, 2);
+    const traits = [...positive, ...negative];
     if (!traits.length) {
-      this.ui.push(this.add.text(x, y, '特质: 暂无', { fontSize: '10px', color: '#e9d5ff' }));
+      this.ui.push(this.add.text(x, y, '特质: 暂无', { fontSize: '9px', color: '#e9d5ff' }));
       return;
     }
-    this.ui.push(this.add.text(x, y, '特质:', { fontSize: '10px', color: '#e9d5ff' }));
+    this.ui.push(this.add.text(x, y, '特质:', { fontSize: '9px', color: '#e9d5ff' }));
     traits.forEach((trait, index) => {
-      const bx = x + 38 + index * 82;
-      const bg = this.add.rectangle(bx + 34, y + 7, 68, 18, 0x3b2a55, 0.96).setStrokeStyle(1, 0xc4b5fd);
-      const text = this.add.text(bx + 34, y + 7, trait.name, { fontSize: '9px', color: '#f5f3ff', fontStyle: 'bold' }).setOrigin(0.5);
+      const bx = x + 38 + index * 94;
+      const isNegative = trait.polarity === 'negative';
+      const bg = this.add.rectangle(bx + 38, y + 7, 76, 18, isNegative ? 0x4a1d2c : 0x3b2a55, 0.96).setStrokeStyle(1, isNegative ? 0xfda4af : 0xc4b5fd);
+      const text = this.add.text(bx + 38, y + 7, `${trait.name}${this.tierLabel(trait.tier)}`, { fontSize: '8px', color: isNegative ? '#fff1f2' : '#f5f3ff', fontStyle: 'bold' }).setOrigin(0.5);
       bg.setInteractive({ useHandCursor: true }).on('pointerdown', () => {
         this.traitDetail = { trait, ownerName: card.name };
         this.render();
@@ -558,41 +723,83 @@ export class LabSliceScene extends Phaser.Scene {
     });
   }
 
+  private traitEffectLines(trait: TraitEntry): string[] {
+    const definition = this.traitDefinition(trait.id);
+    if (!definition) return ['- 当前版本未找到这项特质的效果定义'];
+    const lines: string[] = [];
+    if (definition.statMods) {
+      Object.entries(definition.statMods).forEach(([key, value]) => {
+        if (!value) return;
+        const amount = value * trait.tier;
+        lines.push(`- ${STAT_LABELS[key as StatKey]} ${amount > 0 ? '+' : ''}${amount}`);
+      });
+    }
+    if (definition.statCaps) {
+      Object.entries(definition.statCaps).forEach(([key, value]) => {
+        if (!value) return;
+        const amount = value * trait.tier;
+        lines.push(`- ${STAT_LABELS[key as StatKey]}上限 ${amount > 0 ? '+' : ''}${amount}`);
+      });
+    }
+    if (definition.missionRiskMod) {
+      const amount = definition.missionRiskMod * trait.tier;
+      lines.push(`- 委托风险 ${amount > 0 ? '+' : ''}${amount}`);
+    }
+    if (definition.loyaltyDrainMod) {
+      const amount = definition.loyaltyDrainMod * trait.tier;
+      lines.push(`- 委托中忠诚流失 ${amount > 0 ? '+' : ''}${amount}`);
+    }
+    if (definition.healthDelta) {
+      const amount = definition.healthDelta * trait.tier;
+      lines.push(`- 健康倾向 ${amount > 0 ? '+' : ''}${amount}`);
+    }
+    if (definition.lifespanDelta) {
+      const amount = definition.lifespanDelta * trait.tier;
+      lines.push(`- 寿命潜力 ${amount > 0 ? '+' : ''}${amount}`);
+    }
+    if (definition.fertilityMod) {
+      const amount = definition.fertilityMod * trait.tier;
+      lines.push(`- 繁育倾向 ${amount > 0 ? '+' : ''}${amount}`);
+    }
+    if (!lines.length) lines.push('- 这项特质当前没有单独数值修正，主要通过描述层表达倾向');
+    return lines;
+  }
+
   private renderStatBadges(stats: VisibleStats, x: number, y: number): void {
     const top = STAT_KEYS.slice(0, 4);
     const bottom = STAT_KEYS.slice(4);
     top.forEach((key, index) => {
-      this.ui.push(this.add.text(x + index * 78, y, this.scoreLabel(key, stats[key]), { fontSize: '11px', color: STAT_COLORS[key], fontStyle: 'bold' }));
+      this.ui.push(this.add.text(x + index * 102, y, this.scoreLabel(key, stats[key]), { fontSize: '9px', color: STAT_COLORS[key], fontStyle: 'bold' }));
     });
     bottom.forEach((key, index) => {
-      this.ui.push(this.add.text(x + index * 104, y + 14, this.scoreLabel(key, stats[key]), { fontSize: '11px', color: STAT_COLORS[key], fontStyle: 'bold' }));
+      this.ui.push(this.add.text(x + index * 136, y + 14, this.scoreLabel(key, stats[key]), { fontSize: '9px', color: STAT_COLORS[key], fontStyle: 'bold' }));
     });
   }
 
   private renderCardButtons(card: LabCard, x: number, y: number): void {
     if (this.page === 'breed') {
       if (card.sex === '女') {
-        this.button(x, y, 58, 18, this.motherId === card.id ? '取消母本' : (this.motherBlockedReason(card) ?? '选母本'), this.canToggleMother(card), () => this.toggleMother(card.id), 0x7c3aed);
-        this.button(x + 64, y, 48, 18, '休整', this.canRest(card), () => this.restCard(card.id), 0x475569);
-        this.button(x + 116, y, 48, 18, '医护', this.canMedicate(card), () => this.medicateCard(card.id), 0x0f766e);
-        this.button(x + 52, y + 24, 60, 18, '淘汰', !card.mission && !card.pregnancy, () => this.retireCard(card.id), 0x7f1d1d);
+        this.button(x, y, 72, 20, this.motherId === card.id ? '取消母本' : (this.motherBlockedReason(card) ?? '选母本'), this.canToggleMother(card), () => this.toggleMother(card.id), 0x7c3aed);
+        this.button(x + 80, y, 62, 20, '休整', this.canRest(card), () => this.restCard(card.id), 0x475569);
+        this.button(x + 148, y, 62, 20, '医护', this.canMedicate(card), () => this.medicateCard(card.id), 0x0f766e);
+        this.button(x + 80, y + 26, 86, 20, '淘汰', !card.mission && !card.pregnancy, () => this.retireCard(card.id), 0x7f1d1d);
       } else {
-        this.button(x, y, 58, 18, this.fatherCardId === card.id ? '取消父本' : (this.fatherBlockedReason(card) ?? '选父本'), this.canToggleFather(card), () => this.toggleFather(card.id), 0x1d4ed8);
-        this.button(x + 64, y, 48, 18, '休整', this.canRest(card), () => this.restCard(card.id), 0x475569);
-        this.button(x + 116, y, 48, 18, '改名', card.isPlayerSelf, () => this.renameCard(card.id), 0x0f766e);
-        this.button(x + 52, y + 24, 60, 18, card.isPlayerSelf ? '本人' : '淘汰', !card.isPlayerSelf && !card.mission && !card.pregnancy, () => this.retireCard(card.id), 0x7f1d1d);
+        this.button(x, y, 72, 20, this.fatherCardId === card.id ? '取消父本' : (this.fatherBlockedReason(card) ?? '选父本'), this.canToggleFather(card), () => this.toggleFather(card.id), 0x1d4ed8);
+        this.button(x + 80, y, 62, 20, '休整', this.canRest(card), () => this.restCard(card.id), 0x475569);
+        this.button(x + 148, y, 62, 20, '改名', card.isPlayerSelf, () => this.renameCard(card.id), 0x0f766e);
+        this.button(x + 80, y + 26, 86, 20, card.isPlayerSelf ? '本人' : '淘汰', !card.isPlayerSelf && !card.mission && !card.pregnancy, () => this.retireCard(card.id), 0x7f1d1d);
       }
       return;
     }
     if (card.sex === '女') {
-      this.button(x, y, 58, 18, this.assignmentCardId === card.id ? '取消特工' : (this.assignmentBlockedReason(card) ?? '选特工'), this.assignmentCardId === card.id || this.canSetAssignment(card), () => this.toggleAssignment(card.id), 0x047857);
-      this.button(x + 64, y, 48, 18, '休整', this.canRest(card), () => this.restCard(card.id), 0x475569);
-      this.button(x + 116, y, 48, 18, '医护', this.canMedicate(card), () => this.medicateCard(card.id), 0x0f766e);
-      this.button(x + 52, y + 24, 60, 18, '淘汰', !card.mission && !card.pregnancy, () => this.retireCard(card.id), 0x7f1d1d);
+      this.button(x, y, 72, 20, this.assignmentCardId === card.id ? '取消特工' : (this.assignmentBlockedReason(card) ?? '选特工'), this.assignmentCardId === card.id || this.canSetAssignment(card), () => this.toggleAssignment(card.id), 0x047857);
+      this.button(x + 80, y, 62, 20, '休整', this.canRest(card), () => this.restCard(card.id), 0x475569);
+      this.button(x + 148, y, 62, 20, '医护', this.canMedicate(card), () => this.medicateCard(card.id), 0x0f766e);
+      this.button(x + 80, y + 26, 86, 20, '淘汰', !card.mission && !card.pregnancy, () => this.retireCard(card.id), 0x7f1d1d);
     } else {
-      this.button(x + 64, y, 48, 18, '休整', this.canRest(card), () => this.restCard(card.id), 0x475569);
-      this.button(x + 116, y, 48, 18, '改名', card.isPlayerSelf, () => this.renameCard(card.id), 0x0f766e);
-      this.button(x + 52, y + 24, 60, 18, card.isPlayerSelf ? '本人' : '淘汰', !card.isPlayerSelf && !card.mission && !card.pregnancy, () => this.retireCard(card.id), 0x7f1d1d);
+      this.button(x + 80, y, 62, 20, '休整', this.canRest(card), () => this.restCard(card.id), 0x475569);
+      this.button(x + 148, y, 62, 20, '改名', card.isPlayerSelf, () => this.renameCard(card.id), 0x0f766e);
+      this.button(x + 80, y + 26, 86, 20, card.isPlayerSelf ? '本人' : '淘汰', !card.isPlayerSelf && !card.mission && !card.pregnancy, () => this.retireCard(card.id), 0x7f1d1d);
     }
   }
 
@@ -1133,7 +1340,7 @@ export class LabSliceScene extends Phaser.Scene {
   private cardSummaryLine(card: LabCard): string {
     const role = card.isPlayerSelf ? '自己' : `${card.sex}性`;
     const base = `${role} | ${LIFE_STAGE_LABELS[card.lifeStage]} | ${card.ageDays}天 | 健康${card.health} | 体力${card.stamina}`;
-    return card.sex === '女' ? `${base} | 忠诚${card.loyalty}` : `${base} | 血系值${card.bloodlineValue}`;
+    return card.sex === '女' ? `${base} | 忠诚${card.loyalty}` : `${base} | 遗传潜力${card.bloodlineValue}`;
   }
 
   private cardStateLabel(card: LabCard): string {
@@ -1145,6 +1352,25 @@ export class LabSliceScene extends Phaser.Scene {
   private projectedTendency(stats: VisibleStats): string[] {
     const ordered = [...STAT_KEYS].sort((left, right) => stats[right] - stats[left]);
     return ordered.slice(0, 2).map((key) => STAT_LABELS[key]);
+  }
+
+  private positiveTraits(card: LabCard): TraitEntry[] {
+    return this.combinedTraits(card).filter((trait) => trait.polarity === 'positive');
+  }
+
+  private negativeTraits(card: LabCard): TraitEntry[] {
+    return this.combinedTraits(card).filter((trait) => trait.polarity === 'negative');
+  }
+
+  private tierLabel(tier: number, verbose = false): string {
+    const label = ['I', 'II', 'III', 'IV'][Math.max(0, Math.min(3, tier - 1))] ?? 'I';
+    return verbose ? `等级 ${label}` : ` ${label}`;
+  }
+
+  private negativeTraitText(card: LabCard): string {
+    const traits = this.negativeTraits(card).slice(0, 3);
+    if (!traits.length) return '无';
+    return traits.map((trait) => `${trait.name}${this.tierLabel(trait.tier)}`).join('、');
   }
 
   private canSetMother(card: LabCard): boolean { return card.sex === '女' && this.isBreedingReady(card); }
@@ -1243,24 +1469,97 @@ export class LabSliceScene extends Phaser.Scene {
     this.pushLog('已刷新一项新的潜入委托。');
     this.render();
   }
-  private breedingSummary(): { canBreed: boolean; cost: number; successBand: RiskBand; bloodlineRisk: RiskBand; gestationRisk: RiskBand; mentalRisk: '稳定' | '波动' | '高波动'; childTendency: string; bloodlineDetail: string } {
+  private breedingSummary(): BreedingSummary {
     const mother = this.card(this.motherId);
     const father = this.card(this.fatherCardId);
     const sample = this.sample(this.fatherSampleId);
     const cost = Math.max(6, 12 + (sample?.quality === 'S' ? 4 : sample?.quality === 'A' ? 2 : 0) + this.sumActiveEffect('breedingCostMod'));
-    if (!mother || (!father && !sample)) return { canBreed: false, cost, successBand: '低', bloodlineRisk: '低', gestationRisk: '低', mentalRisk: '稳定', childTendency: '先完成父母选择', bloodlineDetail: '暂无配对' };
+    if (!mother || (!father && !sample)) {
+      return {
+        canBreed: false,
+        cost,
+        successBand: '低',
+        positiveRange: [0, 1],
+        negativeRange: [0, 1],
+        purebloodChance: 0,
+        degradationChance: 0,
+        projectedChildTendency: ['先完成父母选择'],
+        purebloodFactors: [],
+        degradationFactors: [],
+        startScore: 0,
+        riskBoost: 0
+      };
+    }
     const bloodline = father ? this.computeBloodlineRisk(mother, father) : { band: '低' as RiskBand, detail: '外部样本视为外源血线。', negativeBoost: 0 };
-    const fec = this.pairValue(mother.breedingGenome.FEC) + this.pairValue((father?.breedingGenome ?? sample!.breedingGenome).FEC);
-    const ges = this.pairValue(mother.breedingGenome.GES) + this.pairValue((father?.breedingGenome ?? sample!.breedingGenome).GES);
-    const mnd = this.pairValue(mother.breedingGenome.MND) + this.pairValue((father?.breedingGenome ?? sample!.breedingGenome).MND);
-    const healthPressure = mother.health < 68 ? 1 : 0;
-    const successScore = fec + ges + Math.floor((mother.health - 50) / 12) - bloodline.negativeBoost - healthPressure;
-    const gestationScore = ges + Math.floor((mother.visibleStats.constitution - 50) / 12) - bloodline.negativeBoost - (mother.lifeStage === 'declining' || mother.lifeStage === 'aging' ? 1 : 0);
-    const successBand: RiskBand = successScore >= 5 ? '高' : successScore >= 2 ? '中' : successScore >= 0 ? '低' : '极高';
-    const gestationRisk: RiskBand = gestationScore >= 5 ? '低' : gestationScore >= 2 ? '中' : gestationScore >= 0 ? '高' : '极高';
-    const mentalRisk = mnd >= 4 && bloodline.negativeBoost === 0 ? '稳定' : mnd >= 0 ? '波动' : '高波动';
+    const fatherStats = father?.visibleStats ?? this.computeStats(sample!.visibleGenome);
+    const familyTraits = [
+      ...this.positiveTraits(mother),
+      ...(father ? this.positiveTraits(father) : [])
+    ];
+    const familyNegative = [
+      ...this.negativeTraits(mother),
+      ...(father ? this.negativeTraits(father) : [])
+    ];
+    const heredity = Math.max(0, this.pairValue(mother.breedingGenome.HER) + this.pairValue((father?.breedingGenome ?? sample!.breedingGenome).HER));
+    const topStatAverage = Math.round(
+      [...STAT_KEYS]
+        .map((key) => Math.round((mother.visibleStats[key] + fatherStats[key]) / 2))
+        .sort((left, right) => right - left)
+        .slice(0, 3)
+        .reduce((sum, value) => sum + value, 0) / 3
+    );
+    const positiveScore =
+      Math.max(0, topStatAverage - 55) +
+      this.positiveTraitWeight(familyTraits) * 3 +
+      heredity * 2 -
+      bloodline.negativeBoost * 9 -
+      this.negativeTraitWeight(familyNegative) * 2;
+    const negativeScore =
+      bloodline.negativeBoost * 18 +
+      this.negativeTraitWeight(familyNegative) * 3 +
+      Math.max(0, 55 - Math.round((mother.visibleStats.constitution + fatherStats.constitution) / 2)) / 2 +
+      Math.max(0, 55 - Math.round((mother.visibleStats.stability + fatherStats.stability) / 2)) / 2;
+    const successScore = positiveScore - negativeScore / 3 + Math.floor((mother.health - 50) / 6) + Math.floor((mother.stamina - 50) / 8);
+    const successBand: RiskBand = successScore >= 32 ? '高' : successScore >= 18 ? '中' : successScore >= 6 ? '低' : '极高';
+    const purebloodChance = this.computePurebloodChance(mother, father, sample, positiveScore, negativeScore, bloodline.negativeBoost);
+    const degradationChance = this.computeDegradationChance(mother, father, sample, positiveScore, negativeScore, bloodline.negativeBoost);
+    const positiveRange: [number, number] =
+      positiveScore >= 48 ? [3, 4] :
+      positiveScore >= 30 ? [2, 3] :
+      positiveScore >= 18 ? [1, 2] :
+      [0, 1];
+    const negativeRange: [number, number] =
+      degradationChance >= 28 ? [2, 4] :
+      degradationChance >= 16 ? [1, 3] :
+      degradationChance >= 6 ? [1, 2] :
+      [0, 1];
+    const purebloodFactors = [
+      topStatAverage >= 76 ? '主属性底子很高' : topStatAverage >= 66 ? '主属性底子不错' : '',
+      heredity >= 4 ? '遗传稳定度较高' : '',
+      purebloodChance > 0 && this.purebloodCarrierWeight(mother.legacyGenome) + this.purebloodCarrierWeight(father?.legacyGenome ?? sample!.legacyGenome) > 0 ? '血线已带有隐藏纯血种子' : '',
+      this.positiveTraitWeight(familyTraits) >= 8 ? '正面特质方向比较集中' : ''
+    ].filter(Boolean);
+    const degradationFactors = [
+      bloodline.negativeBoost >= 2 ? '近亲压力较重' : bloodline.negativeBoost === 1 ? '存在祖辈重叠' : '',
+      this.negativeTraitWeight(familyNegative) >= 6 ? '坏特质已经开始累积' : this.negativeTraitWeight(familyNegative) >= 2 ? '坏特质有扩散迹象' : '',
+      mother.health < 70 ? '母体当前健康储备偏低' : '',
+      degradationChance > 0 && this.degradationCarrierWeight(mother.legacyGenome) + this.degradationCarrierWeight(father?.legacyGenome ?? sample!.legacyGenome) > 0 ? '血线中已潜伏劣化种子' : ''
+    ].filter(Boolean);
     const canBreed = this.money >= cost && this.isBreedingReady(mother) && (!!sample || (!!father && this.canSetFather(father)));
-    return { canBreed, cost, successBand, bloodlineRisk: bloodline.band, gestationRisk, mentalRisk, childTendency: this.projectChildTendency(mother, father, sample).join(' / '), bloodlineDetail: bloodline.detail };
+    return {
+      canBreed,
+      cost,
+      successBand,
+      positiveRange,
+      negativeRange,
+      purebloodChance,
+      degradationChance,
+      projectedChildTendency: this.projectChildTendency(mother, father, sample),
+      purebloodFactors,
+      degradationFactors,
+      startScore: successScore,
+      riskBoost: bloodline.negativeBoost
+    };
   }
 
   private startBreeding(): void {
@@ -1273,14 +1572,15 @@ export class LabSliceScene extends Phaser.Scene {
     mother.stamina = Math.max(0, mother.stamina - 22);
     mother.health = Math.max(0, mother.health - 4);
     const fecScore = this.pairValue(mother.breedingGenome.FEC) + this.pairValue((father?.breedingGenome ?? sample!.breedingGenome).FEC);
-    const successThreshold = 38 + fecScore * 6 + Math.floor((mother.health - 60) / 4);
+    const successThreshold = Phaser.Math.Clamp(42 + summary.startScore + fecScore * 3, 10, 92);
     if (Phaser.Math.Between(0, 100) > successThreshold) {
       this.pushLog(`${mother.name} 的本轮繁育未能启动：${this.breedingFailureReason(mother, father, sample, summary, fecScore)}。实验室只消耗了准备资源。`);
       this.render();
       return;
     }
-    const children = this.rollChildren(mother, father, sample, summary.bloodlineRisk);
-    mother.pregnancy = { children, fatherLabel: father?.name ?? sample!.name, daysRemaining: summary.gestationRisk === '极高' ? 5 : summary.gestationRisk === '高' ? 4 : 3, gestationRisk: summary.gestationRisk };
+    const children = this.rollChildren(mother, father, sample, summary);
+    const gestationRisk: RiskBand = summary.degradationChance >= 28 ? '高' : summary.degradationChance >= 14 ? '中' : '低';
+    mother.pregnancy = { children, fatherLabel: father?.name ?? sample!.name, daysRemaining: gestationRisk === '高' ? 5 : gestationRisk === '中' ? 4 : 3, gestationRisk };
     if (this.motherId === mother.id) this.motherId = null;
     if (father) father.stamina = Math.max(0, father.stamina - 12);
     if (sample) {
@@ -1477,8 +1777,8 @@ export class LabSliceScene extends Phaser.Scene {
     mother.health = Math.max(0, mother.health - 10);
     pregnancy.children.forEach((child) => {
       events.push(`${mother.name} 完成出生结算，${child.name} (${child.sex}性) 加入卡库。`);
-      if (child.expressedDefects.length) events.push(`${child.name} 初始可见缺陷: ${child.expressedDefects.join('、')}。`);
-      if (child.innateTraits.length) events.push(`${child.name} 先天特质: ${child.innateTraits.map((trait) => trait.name).join('、')}。`);
+      if (this.negativeTraits(child).length) events.push(`${child.name} 初始负面特质: ${this.negativeTraits(child).map((trait) => `${trait.name}${this.tierLabel(trait.tier)}`).join('、')}。`);
+      if (this.positiveTraits(child).length) events.push(`${child.name} 先天特质: ${this.positiveTraits(child).map((trait) => `${trait.name}${this.tierLabel(trait.tier)}`).join('、')}。`);
     });
     return { children: pregnancy.children, events };
   }
@@ -1486,18 +1786,18 @@ export class LabSliceScene extends Phaser.Scene {
     const visibleGenome = this.makeVisibleGenome(statProfile);
     const breedingGenome = this.makeBreedingGenome(breedingProfile);
     const defectGenome = this.makeDefectGenome(defectBias);
-    const card = this.createCardBase(name, sex, generation, ageDays, motherId, fatherId, visibleGenome, breedingGenome, defectGenome);
+    const legacyGenome = this.makeLegacyGenome(isPlayerSelf ? 'starter-strong' : defectBias === 'low' ? 'starter-good' : defectBias === 'medium' ? 'starter-mid' : 'starter-risk');
+    const card = this.createCardBase(name, sex, generation, ageDays, motherId, fatherId, visibleGenome, breedingGenome, defectGenome, legacyGenome);
     card.isPlayerSelf = isPlayerSelf;
     this.revealGrowthTraits(card);
     return card;
   }
 
-  private createChildCard(mother: LabCard, father: LabCard | null, sample: SampleCard | null, generation: number, bloodlineRisk: RiskBand): LabCard[] {
+  private createChildCard(mother: LabCard, father: LabCard | null, sample: SampleCard | null, generation: number, summary: BreedingSummary): LabCard[] {
     const fatherGenome = father?.visibleGenome ?? sample!.visibleGenome;
     const fatherBreeding = father?.breedingGenome ?? sample!.breedingGenome;
     const fatherDefects = father?.defectGenome ?? sample!.defectGenome;
     const fatherId = father?.id ?? null;
-    const riskBoost = bloodlineRisk === '极高' ? 2 : bloodlineRisk === '高' ? 1 : bloodlineRisk === '中' ? 1 : 0;
     const makeOne = (): LabCard => {
       const sex: Sex = Phaser.Math.Between(0, 1) === 0 ? '女' : '男';
       const genome = {} as VisibleGenome;
@@ -1505,8 +1805,11 @@ export class LabSliceScene extends Phaser.Scene {
       const defects = {} as DefectGenome;
       STAT_KEYS.forEach((key) => { genome[key] = mother.visibleGenome[key].map((pair, index) => this.inheritGenePair(pair, fatherGenome[key][index])) as VisibleGenome[StatKey]; });
       BREEDING_GENE_KEYS.forEach((key) => { breeding[key] = this.inheritSimplePair(mother.breedingGenome[key], fatherBreeding[key]); });
-      DEFECT_KEYS.forEach((key) => { defects[key] = this.inheritDefectPair(mother.defectGenome[key], fatherDefects[key], riskBoost); });
-      return this.createCardBase(this.generateName(sex, genome, this.nextId++), sex, generation, 0, mother.id, fatherId, genome, breeding, defects);
+      DEFECT_KEYS.forEach((key) => { defects[key] = this.inheritDefectPair(mother.defectGenome[key], fatherDefects[key], summary.riskBoost); });
+      const legacyGenome = this.inheritLegacyGenome(mother, father, sample, genome, breeding, summary.riskBoost);
+      const child = this.createCardBase(this.generateName(sex, genome, this.nextId++), sex, generation, 0, mother.id, fatherId, genome, breeding, defects, legacyGenome);
+      this.applyFamilyTraitInheritance(child, mother, father, sample, summary.riskBoost);
+      return child;
     };
     const children = [makeOne()];
     const twinChance = this.pairValue(mother.breedingGenome.VAR) + this.pairValue(fatherBreeding.VAR) >= 5 ? 3 : 2;
@@ -1514,7 +1817,7 @@ export class LabSliceScene extends Phaser.Scene {
     return children;
   }
 
-  private rollChildren(mother: LabCard, father: LabCard | null, sample: SampleCard | null, bloodlineRisk: RiskBand): LabCard[] { return this.createChildCard(mother, father, sample, Math.max(mother.generation, father?.generation ?? mother.generation) + 1, bloodlineRisk); }
+  private rollChildren(mother: LabCard, father: LabCard | null, sample: SampleCard | null, summary: BreedingSummary): LabCard[] { return this.createChildCard(mother, father, sample, Math.max(mother.generation, father?.generation ?? mother.generation) + 1, summary); }
 
   private createPlayerSelf(): LabCard {
     const randomTier = (): 'strong' | 'good' | 'balanced' | 'weak' => Phaser.Utils.Array.GetRandom(['strong', 'good', 'balanced', 'weak']);
@@ -1530,11 +1833,11 @@ export class LabSliceScene extends Phaser.Scene {
     return card;
   }
 
-  private createCardBase(name: string, sex: Sex, generation: number, ageDays: number, motherId: string | null, fatherId: string | null, visibleGenome: VisibleGenome, breedingGenome: BreedingGenome, defectGenome: DefectGenome): LabCard {
+  private createCardBase(name: string, sex: Sex, generation: number, ageDays: number, motherId: string | null, fatherId: string | null, visibleGenome: VisibleGenome, breedingGenome: BreedingGenome, defectGenome: DefectGenome, legacyGenome: LegacyGenome): LabCard {
     const visibleStats = this.computeStats(visibleGenome);
     const expressedDefects = this.evaluateDefects(defectGenome, visibleStats);
-    const innateTraits = this.generateInnateTraits(visibleStats, expressedDefects, breedingGenome);
-    const pendingGrowthTraits = this.generateGrowthTraits(visibleStats, breedingGenome, expressedDefects);
+    const innateTraits = this.generateInnateTraits(visibleStats, expressedDefects, breedingGenome, legacyGenome);
+    const pendingGrowthTraits = this.generateGrowthTraits(visibleStats, breedingGenome, expressedDefects, legacyGenome);
     const statsWithTraits = this.applyTraitEffects(visibleStats, [...innateTraits]);
     const healthBase = Phaser.Math.Clamp(statsWithTraits.constitution + 10, 40, 100);
     const card: LabCard = {
@@ -1557,6 +1860,7 @@ export class LabSliceScene extends Phaser.Scene {
       breedingGenome,
       defectGenome,
       expressedDefects,
+      legacyGenome,
       innateTraits,
       growthTraits: [],
       pendingGrowthTraits,
@@ -1566,7 +1870,7 @@ export class LabSliceScene extends Phaser.Scene {
       grandparentIds: this.collectGrandparents(motherId, fatherId),
       lifespanPotential: this.computeLifespan(statsWithTraits.constitution, innateTraits, expressedDefects),
       agingWear: 0,
-      protocolStability: Phaser.Math.Clamp(55 + Math.floor((statsWithTraits.stability - 50) / 2) + this.pairValue(breedingGenome.MND) * 4, 25, 100),
+      protocolStability: Phaser.Math.Clamp(55 + Math.floor((statsWithTraits.stability - 50) / 2) + this.pairValue(breedingGenome.MND) * 4 - this.negativeTraitWeight(innateTraits), 25, 100),
       mission: null,
       pregnancy: null
     };
@@ -1586,6 +1890,14 @@ export class LabSliceScene extends Phaser.Scene {
     const genome = {} as BreedingGenome;
     BREEDING_GENE_KEYS.forEach((key) => { genome[key] = this.randomGenePair(profile[key]); });
     return genome;
+  }
+
+  private makeLegacyGenome(profile: 'starter-strong' | 'starter-good' | 'starter-mid' | 'starter-risk' | 'sample-B' | 'sample-A' | 'sample-S'): LegacyGenome {
+    const pureChance = profile === 'starter-strong' ? 20 : profile === 'starter-good' ? 12 : profile === 'sample-S' ? 18 : profile === 'sample-A' ? 10 : 4;
+    const degradeChance = profile === 'starter-risk' ? 18 : profile === 'starter-mid' ? 10 : profile === 'sample-B' ? 10 : 4;
+    const pureblood: PurebloodPair = [Phaser.Math.Between(0, 100) < pureChance ? 'P' : 'N', Phaser.Math.Between(0, 100) < pureChance ? 'P' : 'N'];
+    const degradation: DegradationPair = [Phaser.Math.Between(0, 100) < degradeChance ? 'D' : 'N', Phaser.Math.Between(0, 100) < degradeChance ? 'D' : 'N'];
+    return { pureblood, degradation };
   }
 
   private makeDefectGenome(bias: 'low' | 'medium' | 'high'): DefectGenome {
@@ -1624,48 +1936,107 @@ export class LabSliceScene extends Phaser.Scene {
     return expressed;
   }
 
-  private generateInnateTraits(stats: VisibleStats, defects: string[], breedingGenome: BreedingGenome): TraitEntry[] {
-    const traits: TraitEntry[] = [];
-    if (stats.appearance >= 82) traits.push(this.toTrait(INNATE_TRAITS.find((trait) => trait.id === 'photogenic')!));
-    if (stats.eloquence >= 80) traits.push(this.toTrait(INNATE_TRAITS.find((trait) => trait.id === 'talkative')!));
-    if (stats.gentleness >= 80) traits.push(this.toTrait(INNATE_TRAITS.find((trait) => trait.id === 'calmingPresence')!));
-    if (stats.stability >= 80) traits.push(this.toTrait(INNATE_TRAITS.find((trait) => trait.id === 'emotionallyStable')!));
-    if (stats.constitution >= 78) traits.push(this.toTrait(INNATE_TRAITS.find((trait) => trait.id === 'pressureResistant')!));
-    if (stats.constitution >= 72 && this.pairValue(breedingGenome.HER) >= 1) traits.push(this.toTrait(INNATE_TRAITS.find((trait) => trait.id === 'longLivedTendency')!));
-    if (defects.includes('体弱')) traits.push(this.toTrait(INNATE_TRAITS.find((trait) => trait.id === 'frailBody')!));
-    if (defects.includes('亚生育')) traits.push(this.toTrait(INNATE_TRAITS.find((trait) => trait.id === 'subfertileBody')!));
-    if (defects.includes('冷淡')) traits.push(this.toTrait(INNATE_TRAITS.find((trait) => trait.id === 'coldAffect')!));
-    return this.uniqueTraits(traits).slice(0, 2);
+  private traitDefinition(id: string): TraitDefinition | undefined {
+    return [...INNATE_TRAITS, ...GROWTH_TRAITS].find((entry) => entry.id === id);
   }
 
-  private generateGrowthTraits(stats: VisibleStats, breedingGenome: BreedingGenome, defects: string[]): PendingGrowthTrait[] {
+  private traitTierFromScore(score: number, good: [number, number, number], great: [number, number]): number {
+    if (score >= great[1]) return 3;
+    if (score >= great[0]) return 2;
+    if (score >= good[2]) return 1;
+    return 0;
+  }
+
+  private addTrait(entries: TraitEntry[], id: string, tier: number): void {
+    if (tier <= 0) return;
+    const definition = this.traitDefinition(id);
+    if (!definition) return;
+    const existing = entries.find((entry) => entry.id === id);
+    if (existing) {
+      existing.tier = Phaser.Math.Clamp(Math.max(existing.tier, tier), 1, 4);
+      return;
+    }
+    entries.push(this.toTrait(definition, Phaser.Math.Clamp(tier, 1, 4)));
+  }
+
+  private addPendingTrait(entries: PendingGrowthTrait[], id: string, tier: number, revealAge: number): void {
+    if (tier <= 0) return;
+    const definition = this.traitDefinition(id);
+    if (!definition) return;
+    const existing = entries.find((entry) => entry.id === id);
+    if (existing) {
+      existing.tier = Phaser.Math.Clamp(Math.max(existing.tier, tier), 1, 4);
+      return;
+    }
+    entries.push(this.toPendingTrait(definition, revealAge, Phaser.Math.Clamp(tier, 1, 4)));
+  }
+
+  private legacyTier(pair: PurebloodPair | DegradationPair, positive: boolean): number {
+    const allele = positive ? 'P' : 'D';
+    const count = pair.filter((entry) => entry === allele).length;
+    return count === 2 ? 2 : 0;
+  }
+
+  private generateInnateTraits(stats: VisibleStats, defects: string[], breedingGenome: BreedingGenome, legacyGenome: LegacyGenome): TraitEntry[] {
+    const traits: TraitEntry[] = [];
+    this.addTrait(traits, 'photogenic', this.traitTierFromScore(stats.appearance, [0, 0, 70], [82, 92]));
+    this.addTrait(traits, 'talkative', this.traitTierFromScore(stats.eloquence, [0, 0, 68], [80, 90]));
+    this.addTrait(traits, 'calmingPresence', this.traitTierFromScore(stats.gentleness, [0, 0, 68], [80, 90]));
+    this.addTrait(traits, 'emotionallyStable', this.traitTierFromScore(stats.stability, [0, 0, 68], [80, 90]));
+    this.addTrait(traits, 'pressureResistant', this.traitTierFromScore(stats.constitution, [0, 0, 66], [78, 88]));
+    if (stats.constitution >= 68 && this.pairValue(breedingGenome.HER) >= 1) this.addTrait(traits, 'longLivedTendency', stats.constitution >= 84 ? 2 : 1);
+    if (defects.includes('体弱') || stats.constitution <= 44) this.addTrait(traits, 'frailBody', defects.includes('体弱') && stats.constitution <= 38 ? 2 : 1);
+    if (defects.includes('亚生育') || this.pairValue(breedingGenome.FEC) <= -2) this.addTrait(traits, 'subfertileBody', defects.includes('亚生育') && this.pairValue(breedingGenome.GES) <= -2 ? 2 : 1);
+    if (defects.includes('冷淡') || stats.gentleness <= 42) this.addTrait(traits, 'coldAffect', defects.includes('冷淡') && stats.gentleness <= 36 ? 2 : 1);
+    if (this.legacyTier(legacyGenome.pureblood, true) > 0) this.addTrait(traits, 'pureblood', this.legacyTier(legacyGenome.pureblood, true));
+    if (this.legacyTier(legacyGenome.degradation, false) > 0) this.addTrait(traits, 'degradedLine', this.legacyTier(legacyGenome.degradation, false));
+    return this.uniqueTraits(traits);
+  }
+
+  private generateGrowthTraits(stats: VisibleStats, breedingGenome: BreedingGenome, defects: string[], legacyGenome: LegacyGenome): PendingGrowthTrait[] {
     const traits: PendingGrowthTrait[] = [];
-    if (stats.stability >= 74) traits.push(this.toPendingTrait(GROWTH_TRAITS.find((trait) => trait.id === 'composedUnderPressure')!, AGE_MATURE_REVEAL));
-    if (stats.eloquence >= 72 || stats.gentleness >= 72) traits.push(this.toPendingTrait(GROWTH_TRAITS.find((trait) => trait.id === 'socialInstinct')!, AGE_MATURE_REVEAL));
-    if (this.pairValue(breedingGenome.MND) <= -1) traits.push(this.toPendingTrait(GROWTH_TRAITS.find((trait) => trait.id === 'overSensitive')!, AGE_GROWTH_REVEAL));
-    if (this.pairValue(breedingGenome.MND) >= 2) traits.push(this.toPendingTrait(GROWTH_TRAITS.find((trait) => trait.id === 'bloodlineEcho')!, AGE_MATURE_REVEAL));
-    if (this.pairValue(breedingGenome.VAR) >= 2) traits.push(this.toPendingTrait(GROWTH_TRAITS.find((trait) => trait.id === 'selfAwareness')!, AGE_MATURE_REVEAL));
-    if (defects.includes('不稳')) traits.push(this.toPendingTrait(GROWTH_TRAITS.find((trait) => trait.id === 'protocolDrift')!, AGE_MATURE_REVEAL));
-    if (stats.constitution >= 76) traits.push(this.toPendingTrait(GROWTH_TRAITS.find((trait) => trait.id === 'selfRepair')!, AGE_MATURE_REVEAL));
-    if (stats.constitution <= 45) traits.push(this.toPendingTrait(GROWTH_TRAITS.find((trait) => trait.id === 'overworkSensitive')!, AGE_MATURE_REVEAL));
-    if (stats.gentleness >= 68 && stats.stability >= 68) traits.push(this.toPendingTrait(GROWTH_TRAITS.find((trait) => trait.id === 'attachmentFormed')!, AGE_GROWTH_REVEAL));
-    return this.uniquePendingTraits(traits).slice(0, 2);
+    this.addPendingTrait(traits, 'composedUnderPressure', this.traitTierFromScore(stats.stability, [0, 0, 70], [82, 90]), AGE_MATURE_REVEAL);
+    this.addPendingTrait(traits, 'socialInstinct', this.traitTierFromScore(Math.max(stats.eloquence, stats.gentleness), [0, 0, 70], [82, 90]), AGE_MATURE_REVEAL);
+    if (this.pairValue(breedingGenome.MND) <= -1) this.addPendingTrait(traits, 'overSensitive', this.pairValue(breedingGenome.MND) <= -3 ? 2 : 1, AGE_GROWTH_REVEAL);
+    if (this.pairValue(breedingGenome.MND) >= 2) this.addPendingTrait(traits, 'bloodlineEcho', this.pairValue(breedingGenome.MND) >= 4 ? 2 : 1, AGE_MATURE_REVEAL);
+    if (this.pairValue(breedingGenome.VAR) >= 2) this.addPendingTrait(traits, 'selfAwareness', this.pairValue(breedingGenome.VAR) >= 4 ? 2 : 1, AGE_MATURE_REVEAL);
+    if (defects.includes('不稳') || this.legacyTier(legacyGenome.degradation, false) > 0) this.addPendingTrait(traits, 'protocolDrift', defects.includes('不稳') ? 2 : 1, AGE_MATURE_REVEAL);
+    if (stats.constitution >= 76) this.addPendingTrait(traits, 'selfRepair', stats.constitution >= 90 ? 2 : 1, AGE_MATURE_REVEAL);
+    if (stats.constitution <= 48 || defects.includes('体弱')) this.addPendingTrait(traits, 'overworkSensitive', stats.constitution <= 38 ? 2 : 1, AGE_MATURE_REVEAL);
+    if (stats.gentleness >= 68 && stats.stability >= 68) this.addPendingTrait(traits, 'attachmentFormed', Math.min(2, 1 + Math.floor((Math.min(stats.gentleness, stats.stability) - 68) / 16)), AGE_GROWTH_REVEAL);
+    return this.uniquePendingTraits(traits);
   }
 
   private applyTraitEffects(stats: VisibleStats, traits: TraitEntry[]): VisibleStats {
+    const caps = Object.fromEntries(STAT_KEYS.map((key) => [key, 60])) as VisibleStats;
     const result = { ...stats };
     traits.forEach((trait) => {
-      const definition = [...INNATE_TRAITS, ...GROWTH_TRAITS].find((entry) => entry.id === trait.id);
-      if (!definition?.statMods) return;
-      Object.entries(definition.statMods).forEach(([key, value]) => { result[key as StatKey] = Phaser.Math.Clamp(result[key as StatKey] + (value ?? 0), 0, 100); });
+      const definition = this.traitDefinition(trait.id);
+      if (!definition) return;
+      if (definition.statCaps) {
+        Object.entries(definition.statCaps).forEach(([key, value]) => {
+          caps[key as StatKey] += (value ?? 0) * trait.tier;
+        });
+      }
+      if (definition.statMods) {
+        Object.entries(definition.statMods).forEach(([key, value]) => {
+          result[key as StatKey] += (value ?? 0) * trait.tier;
+        });
+      }
+    });
+    STAT_KEYS.forEach((key) => {
+      const maxCap = Phaser.Math.Clamp(caps[key], 20, 98);
+      result[key] = Phaser.Math.Clamp(result[key], 0, maxCap);
     });
     return result;
   }
   private computeLifespan(constitution: number, traits: TraitEntry[], defects: string[]): number {
     let lifespan = 72 + Math.floor((constitution - 50) / 2);
-    if (traits.some((trait) => trait.id === 'longLivedTendency')) lifespan += 18;
-    if (traits.some((trait) => trait.id === 'frailBody')) lifespan -= 10;
-    if (defects.includes('体弱')) lifespan -= 6;
+    lifespan += this.traitTierSum(traits, 'longLivedTendency') * 10;
+    lifespan += this.traitTierSum(traits, 'pureblood') * 8;
+    lifespan -= this.traitTierSum(traits, 'frailBody') * 8;
+    lifespan -= this.traitTierSum(traits, 'degradedLine') * 12;
+    if (defects.includes('体弱')) lifespan -= 4;
     return Phaser.Math.Clamp(lifespan, 45, 120);
   }
 
@@ -1673,8 +2044,8 @@ export class LabSliceScene extends Phaser.Scene {
     const topStats = [...STAT_KEYS].sort((left, right) => stats[right] - stats[left]).slice(0, 3);
     let value = topStats.reduce((sum, key) => sum + Math.floor(stats[key] / 10), 0);
     value += this.pairValue(breedingGenome.HER) * 2 + this.pairValue(breedingGenome.FEC);
-    value += traits.length * 3;
-    value -= defects.length * 4;
+    value += this.positiveTraitWeight(traits);
+    value -= this.negativeTraitWeight(traits) + defects.length * 2;
     return Phaser.Math.Clamp(value, 8, 99);
   }
 
@@ -1686,16 +2057,79 @@ export class LabSliceScene extends Phaser.Scene {
     else if (ordered[0] === 'aura') tags.push('气场型');
     else if (ordered[0] === 'appearance' || ordered[0] === 'figure') tags.push(sex === '女' ? '镜面潜力' : '优良父系');
     else tags.push('稳定型');
-    if (traits.some((trait) => trait.id === 'longLivedTendency')) tags.push('长线血系');
+    if (this.traitTierSum(traits, 'pureblood')) tags.push('纯血线');
+    else if (traits.some((trait) => trait.id === 'longLivedTendency')) tags.push('长线血系');
     if (traits.some((trait) => trait.id === 'emotionallyStable')) tags.push('心智稳');
-    if (defects.length) tags.push('隐患血系');
+    if (this.traitTierSum(traits, 'degradedLine') || defects.length) tags.push('劣化隐患');
     return tags.slice(0, 3);
   }
 
-  private toTrait(definition: TraitDefinition): TraitEntry { return { id: definition.id, name: definition.name, stage: definition.stage, description: definition.description }; }
-  private toPendingTrait(definition: TraitDefinition, revealAge: number): PendingGrowthTrait { return { ...this.toTrait(definition), revealAge }; }
+  private toTrait(definition: TraitDefinition, tier = 1): TraitEntry { return { id: definition.id, name: definition.name, stage: definition.stage, description: definition.description, tier, polarity: definition.polarity }; }
+  private toPendingTrait(definition: TraitDefinition, revealAge: number, tier = 1): PendingGrowthTrait { return { ...this.toTrait(definition, tier), revealAge }; }
   private uniqueTraits(traits: TraitEntry[]): TraitEntry[] { return traits.filter((trait, index) => traits.findIndex((entry) => entry.id === trait.id) === index); }
   private uniquePendingTraits(traits: PendingGrowthTrait[]): PendingGrowthTrait[] { return traits.filter((trait, index) => traits.findIndex((entry) => entry.id === trait.id) === index); }
+  private traitTierSum(traits: TraitEntry[], id: string): number { return traits.filter((trait) => trait.id === id).reduce((sum, trait) => sum + trait.tier, 0); }
+  private positiveTraitWeight(traits: TraitEntry[]): number { return traits.filter((trait) => trait.polarity === 'positive').reduce((sum, trait) => sum + trait.tier * 2, 0); }
+  private negativeTraitWeight(traits: TraitEntry[]): number { return traits.filter((trait) => trait.polarity === 'negative').reduce((sum, trait) => sum + trait.tier * 2, 0); }
+  private combinedTraits(card: LabCard): TraitEntry[] { return [...card.innateTraits, ...card.growthTraits]; }
+  private highestTraitTier(card: LabCard, id: string): number { return this.combinedTraits(card).filter((trait) => trait.id === id).reduce((max, trait) => Math.max(max, trait.tier), 0); }
+
+  private inheritLegacyGenome(mother: LabCard, father: LabCard | null, sample: SampleCard | null, childStatsGenome: VisibleGenome, childBreedingGenome: BreedingGenome, riskBoost: number): LegacyGenome {
+    const fatherLegacy = father?.legacyGenome ?? sample!.legacyGenome;
+    const childStats = this.computeStats(childStatsGenome);
+    const positiveScore =
+      Math.floor((childStats.appearance + childStats.aura + childStats.eloquence + childStats.stability) / 32) +
+      Math.max(0, this.pairValue(childBreedingGenome.HER)) * 3 +
+      Math.max(0, this.pairValue(childBreedingGenome.FEC)) * 2 -
+      riskBoost * 8;
+    const negativeScore =
+      12 + riskBoost * 16 +
+      Math.max(0, -this.pairValue(childBreedingGenome.MND)) * 4 +
+      Math.max(0, 55 - childStats.constitution) / 4;
+
+    const pureSeed = Phaser.Math.Clamp(positiveScore >= 90 ? 0.16 : positiveScore >= 75 ? 0.09 : positiveScore >= 60 ? 0.04 : 0, 0, 0.2);
+    const degradeSeed = Phaser.Math.Clamp((negativeScore >= 60 ? 0.2 : negativeScore >= 42 ? 0.12 : negativeScore >= 28 ? 0.05 : 0.01), 0, 0.35);
+    const inheritSpecialAllele = <T extends 'N' | 'P' | 'D'>(pair: [T, T], active: T, seedChance: number): T => {
+      const selected = Phaser.Utils.Array.GetRandom(pair);
+      if (selected === active) return active;
+      return Phaser.Math.Between(0, 1000) < seedChance * 1000 ? active : 'N' as T;
+    };
+    return {
+      pureblood: [
+        inheritSpecialAllele(mother.legacyGenome.pureblood, 'P', pureSeed),
+        inheritSpecialAllele(fatherLegacy.pureblood, 'P', pureSeed)
+      ],
+      degradation: [
+        inheritSpecialAllele(mother.legacyGenome.degradation, 'D', degradeSeed),
+        inheritSpecialAllele(fatherLegacy.degradation, 'D', degradeSeed)
+      ]
+    };
+  }
+
+  private applyFamilyTraitInheritance(child: LabCard, mother: LabCard, father: LabCard | null, sample: SampleCard | null, riskBoost: number): void {
+    const parentTraits = [...this.combinedTraits(mother), ...(father ? this.combinedTraits(father) : [])];
+    const traitIds = [...new Set(parentTraits.map((trait) => trait.id))];
+    const her = Math.max(0, this.pairValue(child.breedingGenome.HER));
+    traitIds.forEach((id) => {
+      const definition = this.traitDefinition(id);
+      if (!definition) return;
+      const motherTier = this.highestTraitTier(mother, id);
+      const fatherTier = father ? this.highestTraitTier(father, id) : 0;
+      const sourceCount = (motherTier > 0 ? 1 : 0) + (fatherTier > 0 ? 1 : 0);
+      if (!sourceCount) return;
+      const baseChance = sourceCount === 2 ? 55 : 28;
+      const chance = Phaser.Math.Clamp(baseChance + her * 6 + Math.max(motherTier, fatherTier) * 8 + (definition.polarity === 'negative' ? riskBoost * 12 + this.legacyTier(child.legacyGenome.degradation, false) * 10 : this.legacyTier(child.legacyGenome.pureblood, true) * 8), 0, 95);
+      if (Phaser.Math.Between(0, 100) > chance) return;
+      const target = definition.stage === 'growth' ? child.pendingGrowthTraits : child.innateTraits;
+      const tier = Phaser.Math.Clamp(Math.max(motherTier, fatherTier) + (sourceCount === 2 ? 1 : 0), 1, 4);
+      if (definition.stage === 'growth') this.addPendingTrait(target as PendingGrowthTrait[], id, tier, definition.id === 'attachmentFormed' || definition.id === 'overSensitive' ? AGE_GROWTH_REVEAL : AGE_MATURE_REVEAL);
+      else this.addTrait(target as TraitEntry[], id, tier);
+    });
+    child.visibleStats = this.applyTraitEffects(this.computeStats(child.visibleGenome), child.innateTraits);
+    child.bloodlineValue = this.computeBloodlineValue(child.visibleStats, child.innateTraits, child.expressedDefects, child.breedingGenome);
+    child.tags = this.buildTags(child.sex, child.visibleStats, child.innateTraits, child.expressedDefects);
+    child.lifespanPotential = this.computeLifespan(child.visibleStats.constitution, child.innateTraits, child.expressedDefects);
+  }
 
   private collectGrandparents(motherId: string | null, fatherId: string | null): string[] {
     const ids = [motherId, fatherId].filter((id): id is string => !!id);
@@ -1727,7 +2161,7 @@ export class LabSliceScene extends Phaser.Scene {
     const revealable = card.pendingGrowthTraits.filter((trait) => card.ageDays >= trait.revealAge);
     if (!revealable.length) return;
     revealable.forEach((trait) => {
-      card.growthTraits.push({ id: trait.id, name: trait.name, stage: trait.stage, description: trait.description });
+      card.growthTraits.push({ id: trait.id, name: trait.name, stage: trait.stage, description: trait.description, tier: trait.tier, polarity: trait.polarity });
       this.pushLog(`${card.name} 觉醒了成长特质“${trait.name}”。`);
     });
     card.pendingGrowthTraits = card.pendingGrowthTraits.filter((trait) => card.ageDays < trait.revealAge);
@@ -1744,10 +2178,10 @@ export class LabSliceScene extends Phaser.Scene {
   }
 
   private baseWear(card: LabCard): number { if (card.lifeStage === 'declining') return 2; if (card.lifeStage === 'aging') return 3; return 1; }
-  private healthLossOnMission(card: LabCard): number { let loss = 2 + Math.max(0, 2 - Math.floor((card.visibleStats.constitution - 50) / 15)); if (this.hasTrait(card, 'pressureResistant')) loss -= 1; if (this.hasTrait(card, 'overworkSensitive')) loss += 1; if (card.expressedDefects.includes('体弱')) loss += 1; return Math.max(1, loss); }
-  private healthLossOnPregnancy(card: LabCard): number { let loss = 2; if (card.expressedDefects.includes('亚生育') || card.expressedDefects.includes('体弱')) loss += 1; if (card.lifeStage === 'declining' || card.lifeStage === 'aging') loss += 1; return loss; }
-  private passiveHealthRecovery(card: LabCard): number { let gain = 1 + this.sumActiveEffect('healthRecoveryDaily'); if (this.hasTrait(card, 'selfRepair')) gain += 1; if (card.expressedDefects.includes('体弱')) gain -= 1; return Math.max(0, gain); }
-  private loyaltyLoss(card: LabCard): number { if (!card.mission) return 0; let loss = Math.max(1, card.mission.targetCharisma + card.mission.pressure - Math.floor((card.visibleStats.stability - 50) / 15)); if (this.hasTrait(card, 'composedUnderPressure')) loss -= 1; if (this.hasTrait(card, 'overSensitive')) loss += 1; if (card.expressedDefects.includes('依附脆弱')) loss += 1; if (this.hasTrait(card, 'coldAffect')) loss -= 1; return Math.max(1, loss); }
+  private healthLossOnMission(card: LabCard): number { let loss = 2 + Math.max(0, 2 - Math.floor((card.visibleStats.constitution - 50) / 15)); loss -= this.highestTraitTier(card, 'pressureResistant'); loss += this.highestTraitTier(card, 'overworkSensitive'); loss += this.highestTraitTier(card, 'frailBody'); loss += this.highestTraitTier(card, 'degradedLine'); return Math.max(1, loss); }
+  private healthLossOnPregnancy(card: LabCard): number { let loss = 2; loss += this.highestTraitTier(card, 'subfertileBody'); loss += this.highestTraitTier(card, 'frailBody'); if (card.lifeStage === 'declining' || card.lifeStage === 'aging') loss += 1; return loss; }
+  private passiveHealthRecovery(card: LabCard): number { let gain = 1 + this.sumActiveEffect('healthRecoveryDaily'); gain += this.highestTraitTier(card, 'selfRepair'); gain -= this.highestTraitTier(card, 'frailBody'); gain -= this.highestTraitTier(card, 'degradedLine'); return Math.max(0, gain); }
+  private loyaltyLoss(card: LabCard): number { if (!card.mission) return 0; let loss = Math.max(1, card.mission.targetCharisma + card.mission.pressure - Math.floor((card.visibleStats.stability - 50) / 15)); loss -= this.highestTraitTier(card, 'composedUnderPressure'); loss += this.highestTraitTier(card, 'overSensitive'); loss += Math.ceil(this.highestTraitTier(card, 'degradedLine') / 2); loss += this.highestTraitTier(card, 'coldAffect'); return Math.max(1, loss); }
   private protocolDrift(card: LabCard): number { let drift = card.mission ? 1 + card.mission.pressure : 0; if (this.hasTrait(card, 'protocolDrift')) drift += 2; if (this.hasTrait(card, 'selfAwareness')) drift += 1; if (this.hasTrait(card, 'emotionallyStable')) drift -= 1; return Math.max(0, drift); }
 
   private computeMissionRisk(card: LabCard, target: MissionTarget): number {
@@ -1768,12 +2202,46 @@ export class LabSliceScene extends Phaser.Scene {
 
   private traitMissionModifier(card: LabCard): number {
     let mod = 0;
-    if (this.hasTrait(card, 'talkative')) mod -= 4;
-    if (this.hasTrait(card, 'calmingPresence')) mod -= 4;
-    if (this.hasTrait(card, 'socialInstinct')) mod -= 5;
-    if (this.hasTrait(card, 'overSensitive')) mod += 3;
-    if (this.hasTrait(card, 'frailBody')) mod += 5;
+    mod -= this.highestTraitTier(card, 'talkative') * 2;
+    mod -= this.highestTraitTier(card, 'calmingPresence') * 2;
+    mod -= this.highestTraitTier(card, 'socialInstinct') * 3;
+    mod += this.highestTraitTier(card, 'overSensitive') * 3;
+    mod += this.highestTraitTier(card, 'frailBody') * 4;
+    mod -= this.highestTraitTier(card, 'pureblood') * 2;
+    mod += this.highestTraitTier(card, 'degradedLine') * 5;
     return mod;
+  }
+
+  private purebloodCarrierWeight(legacyGenome: LegacyGenome): number {
+    return legacyGenome.pureblood.filter((allele) => allele === 'P').length;
+  }
+
+  private degradationCarrierWeight(legacyGenome: LegacyGenome): number {
+    return legacyGenome.degradation.filter((allele) => allele === 'D').length;
+  }
+
+  private purebloodTransmitChance(legacyGenome: LegacyGenome, seedChance: number): number {
+    const carrier = this.purebloodCarrierWeight(legacyGenome) / 2;
+    return Phaser.Math.Clamp(carrier + (1 - carrier) * seedChance, 0, 1);
+  }
+
+  private degradationTransmitChance(legacyGenome: LegacyGenome, seedChance: number): number {
+    const carrier = this.degradationCarrierWeight(legacyGenome) / 2;
+    return Phaser.Math.Clamp(carrier + (1 - carrier) * seedChance, 0, 1);
+  }
+
+  private computePurebloodChance(mother: LabCard, father: LabCard | null, sample: SampleCard | null, positiveScore: number, negativeScore: number, riskBoost: number): number {
+    const fatherLegacy = father?.legacyGenome ?? sample!.legacyGenome;
+    const seedChance = Phaser.Math.Clamp((positiveScore - 26) / 220 - riskBoost * 0.01 - negativeScore / 900, 0, 0.18);
+    const chance = this.purebloodTransmitChance(mother.legacyGenome, seedChance) * this.purebloodTransmitChance(fatherLegacy, seedChance);
+    return Math.round(Phaser.Math.Clamp(chance * 100, 0, 95));
+  }
+
+  private computeDegradationChance(mother: LabCard, father: LabCard | null, sample: SampleCard | null, positiveScore: number, negativeScore: number, riskBoost: number): number {
+    const fatherLegacy = father?.legacyGenome ?? sample!.legacyGenome;
+    const seedChance = Phaser.Math.Clamp(negativeScore / 180 + riskBoost * 0.04 - positiveScore / 500, 0, 0.35);
+    const chance = this.degradationTransmitChance(mother.legacyGenome, seedChance) * this.degradationTransmitChance(fatherLegacy, seedChance);
+    return Math.round(Phaser.Math.Clamp(chance * 100, 0, 98));
   }
 
   private pairValue(pair: GenePair): number { return ALLELE_VALUES[pair[0]] + ALLELE_VALUES[pair[1]]; }
@@ -1798,15 +2266,15 @@ export class LabSliceScene extends Phaser.Scene {
     return this.projectedTendency(combined);
   }
 
-  private breedingFailureReason(mother: LabCard, father: LabCard | null, sample: SampleCard | null, summary: { bloodlineRisk: RiskBand; gestationRisk: RiskBand; mentalRisk: '稳定' | '波动' | '高波动' }, fecScore: number): string {
+  private breedingFailureReason(mother: LabCard, father: LabCard | null, sample: SampleCard | null, summary: BreedingSummary, fecScore: number): string {
     const reasons: string[] = [];
     if (mother.health < 70) reasons.push('母体健康储备不足');
     if (mother.stamina < 65) reasons.push('母体体力恢复不够');
     if (fecScore <= 0) reasons.push('配对繁殖力偏低');
     else if (fecScore <= 2) reasons.push('繁殖力只在临界线附近');
-    if (summary.bloodlineRisk === '高' || summary.bloodlineRisk === '极高') reasons.push('血系压力过高');
-    if (summary.gestationRisk === '高' || summary.gestationRisk === '极高') reasons.push('孕程稳定性不足');
-    if (summary.mentalRisk === '高波动') reasons.push('心智波动过强');
+    if (summary.negativeRange[0] >= 2) reasons.push('预计坏特质压力过高');
+    if (summary.degradationChance >= 25) reasons.push('劣化风险过高');
+    if (summary.positiveRange[1] <= 1) reasons.push('可保留的好特质太少');
     if (!reasons.length) {
       if (father) return `父本 ${father.name} 与母体状态暂时没有形成稳定启动窗口`;
       if (sample) return `样本 ${sample.name} 与母体状态暂时没有形成稳定启动窗口`;
@@ -1826,7 +2294,8 @@ export class LabSliceScene extends Phaser.Scene {
       usesLeft: quality === 'S' ? 2 : 1,
       visibleGenome: this.makeVisibleGenome({ appearance: tier, figure: tier, aura: tier, gentleness: 'balanced', eloquence: tier, stability: 'good', constitution: 'good' }),
       breedingGenome: this.makeBreedingGenome({ FEC: tier, GES: 'good', HER: quality === 'S' ? 'strong' : 'good', VAR: quality === 'B' ? 'balanced' : 'good', MND: 'balanced' }),
-      defectGenome: this.makeDefectGenome(quality === 'S' ? 'low' : 'medium')
+      defectGenome: this.makeDefectGenome(quality === 'S' ? 'low' : 'medium'),
+      legacyGenome: this.makeLegacyGenome(quality === 'S' ? 'sample-S' : quality === 'A' ? 'sample-A' : 'sample-B')
     };
   }
 
@@ -1891,7 +2360,7 @@ export class LabSliceScene extends Phaser.Scene {
   private target(id?: string | null): MissionTarget | null { return id ? this.targets.find((entry) => entry.id === id) ?? null : null; }
   private card(id?: string | null): LabCard | null { return id ? this.cards.find((entry) => entry.id === id) ?? null : null; }
   private sample(id?: string | null): SampleCard | null { return id ? this.samples.find((entry) => entry.id === id) ?? null : null; }
-  private inRoster(x: number, y: number): boolean { return x >= 18 && x <= 642 && y >= 104 && y <= ROSTER_VIEW_BOTTOM; }
+  private inRoster(x: number, y: number): boolean { return x >= LEFT_PANEL_X && x <= LEFT_PANEL_X + LEFT_PANEL_WIDTH && y >= 96 && y <= ROSTER_VIEW_BOTTOM; }
   private maxScroll(): number {
     const rows = this.rosterTab === 'sample' ? this.samples.length : this.filteredCards().length;
     const rowStep = ROSTER_CARD_HEIGHT + ROSTER_CARD_GAP;
@@ -1914,7 +2383,7 @@ export class LabSliceScene extends Phaser.Scene {
   private maxMonitorScroll(): number { return Math.max(0, this.log.length - 4); }
   private clampMonitorScroll(value: number): number { return Phaser.Math.Clamp(value, 0, this.maxMonitorScroll()); }
   private pushLog(message: string): void { this.log.unshift(message); this.log = this.log.slice(0, 30); this.monitorScroll = this.clampMonitorScroll(this.monitorScroll); }
-  private inMonitor(x: number, y: number): boolean { return x >= 690 && x <= 918 && y >= 90 && y <= 318; }
+  private inMonitor(x: number, y: number): boolean { return x >= RIGHT_PANEL_X + 12 && x <= RIGHT_PANEL_X + RIGHT_PANEL_WIDTH - 12 && y >= RIGHT_PANEL_Y + 40 && y <= RIGHT_PANEL_Y + MONITOR_PANEL_HEIGHT - 14; }
   private snapRosterScroll(value: number): number {
     const rowStep = ROSTER_CARD_HEIGHT + ROSTER_CARD_GAP;
     return this.clampScroll(Math.round(value / rowStep) * rowStep);
